@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "Roboto Mono", ui-monospace, monospace;
+}
+
+:root,
+html.theme-dark,
+html[data-theme='dark'] {
+  --bg: #0d1116;
+  --panel: #151a1f;
+  --panel-2: #12171c;
+  --border: #2a3036;
+  --text: #e8ecef;
+  --text-soft: #c8d0d6;
+  --muted: #7a848c;
+  --hover: #1a2026;
+}
+
+html.theme-light,
+html[data-theme='light'] {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef1f4;
+  --border: #d0d7de;
+  --text: #1a1f24;
+  --text-soft: #2f363d;
+  --muted: #6a737c;
+  --hover: #e8ecf0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg, #0d1116);
+  color: var(--text, #e8ecef);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Light theme shell: lift hardcoded dark surfaces without rewriting every page */
+html.theme-light .app-shell,
+html[data-theme='light'] .app-shell {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+html.theme-light .app-shell [class*='bg-[#0D1116]'],
+html.theme-light .app-shell [class*='bg-[#0d1116]'],
+html[data-theme='light'] .app-shell [class*='bg-[#0D1116]'] {
+  background-color: var(--bg) !important;
+}
+
+html.theme-light .app-shell [class*='bg-[#151A1F]'],
+html.theme-light .app-shell [class*='bg-[#12171C]'],
+html.theme-light .app-shell [class*='bg-[#1A1F24]'],
+html.theme-light .app-shell [class*='bg-[#1A2026]'],
+html[data-theme='light'] .app-shell [class*='bg-[#151A1F]'] {
+  background-color: var(--panel) !important;
+}
+
+html.theme-light .app-shell [class*='border-[#2A3036]'],
+html.theme-light .app-shell [class*='border-[#1E242A]'],
+html.theme-light .app-shell [class*='border-[#3A424A]'] {
+  border-color: var(--border) !important;
+}
+
+html.theme-light .app-shell [class*='text-[#E8ECEF]'],
+html.theme-light .app-shell [class*='text-[#C8D0D6]'],
+html.theme-light .app-shell [class*='text-[#D0D5D9]'] {
+  color: var(--text) !important;
+}
+
+html.theme-light .app-shell [class*='text-[#8A949C]'],
+html.theme-light .app-shell [class*='text-[#7A848C]'],
+html.theme-light .app-shell [class*='text-[#6A737C]'],
+html.theme-light .app-shell [class*='text-[#5A636C]'] {
+  color: var(--muted) !important;
+}
+
+/* Accessible focus ring for keyboard ops */
+:focus-visible {
+  outline: 2px solid #1adbde;
+  outline-offset: 2px;
+}
+
+/* Compact enterprise scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a424a transparent;
+}
+
+/* Live map vertical zoom slider */
+.map-zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.map-zoom-slider::-webkit-slider-runnable-track {
+  width: 4px;
+  background: #2a323a;
+  border-radius: 999px;
+}
+.map-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-left: -4px;
+  border-radius: 999px;
+  background: #1adbde;
+  border: 2px solid #0d1116;
+  box-shadow: 0 0 6px #1adbde88;
+  cursor: grab;
+}
+.map-zoom-slider::-moz-range-track {
+  width: 4px;
+  background: #2a323a;
+  border-radius: 999px;
+}
+.map-zoom-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #1adbde;
+  border: 2px solid #0d1116;
+  box-shadow: 0 0 6px #1adbde88;
+  cursor: grab;
+}

@@ -1,0 +1,59 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vite-source-tags.js
+.vercel
+
+# Environment files - NEVER COMMIT
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.*.production
+.env.*.development
+
+# Vercel config with secrets
+vercel.json
+
+# Secrets and keys
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+service-account.json
+credentials.json
+firebase-config.json
+id_rsa
+id_ed25519
+*.sql
+*.dump
+*.sqlite
+*.db
+
+# Source artifacts
+*.tar.gz
+*.zip
+mining-command-fms-source*
