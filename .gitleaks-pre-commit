@@ -1,0 +1,3 @@
+#!/bin/bash
+# Pre-commit hook for gitleaks
+exec /c/Users/ACER/bin/gitleaks.exe protect --staged -v
