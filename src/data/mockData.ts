@@ -60,9 +60,42 @@ export const INITIAL_KPIS: TelemetryKpi[] = [
   },
 ];
 
+import { mapXYToLatLng } from '../lib/mapConfig';
+
 export const INITIAL_VEHICLES: VehicleMarker[] = [
-  { id: 'v-ht-04', type: 'haul', label: 'HT-04', detail: '150m Moving', x: 62, y: 36 },
-  { id: 'v-ex-01', type: 'excavator', label: 'EX-01', detail: '93 km/h / Load', x: 54, y: 74 },
+  {
+    id: 'v-ht-04',
+    type: 'haul',
+    label: 'HT-04',
+    detail: '150m Moving',
+    x: 62,
+    y: 36,
+    lat: mapXYToLatLng(62, 36)[0],
+    lng: mapXYToLatLng(62, 36)[1],
+    trail: [
+      { lat: mapXYToLatLng(82, 36)[0], lng: mapXYToLatLng(82, 36)[1] },
+      { lat: mapXYToLatLng(76, 38)[0], lng: mapXYToLatLng(76, 38)[1] },
+      { lat: mapXYToLatLng(70, 40)[0], lng: mapXYToLatLng(70, 40)[1] },
+      { lat: mapXYToLatLng(66, 37)[0], lng: mapXYToLatLng(66, 37)[1] },
+      { lat: mapXYToLatLng(62, 36)[0], lng: mapXYToLatLng(62, 36)[1] },
+    ],
+  },
+  {
+    id: 'v-ex-01',
+    type: 'excavator',
+    label: 'EX-01',
+    detail: '93 km/h / Load',
+    x: 54,
+    y: 74,
+    lat: mapXYToLatLng(54, 74)[0],
+    lng: mapXYToLatLng(54, 74)[1],
+    trail: [
+      { lat: mapXYToLatLng(34, 60)[0], lng: mapXYToLatLng(34, 60)[1] },
+      { lat: mapXYToLatLng(42, 66)[0], lng: mapXYToLatLng(42, 66)[1] },
+      { lat: mapXYToLatLng(48, 70)[0], lng: mapXYToLatLng(48, 70)[1] },
+      { lat: mapXYToLatLng(54, 74)[0], lng: mapXYToLatLng(54, 74)[1] },
+    ],
+  },
 ];
 
 export const HAUL_TRUCKS: HaulTruckListItem[] = [

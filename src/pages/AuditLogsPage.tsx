@@ -15,7 +15,7 @@ const LOGS: AuditRow[] = [
   {
     id: '1',
     time: '14:38:12 UTC',
-    actor: 'Alex R.',
+    actor: 'Aldi',
     action: 'ACK_ALERT',
     module: 'Alerts',
     detail: 'Acknowledged ENG-441 on HT-14',
@@ -24,7 +24,7 @@ const LOGS: AuditRow[] = [
   {
     id: '2',
     time: '14:30:05 UTC',
-    actor: 'J. Brooks',
+    actor: 'Dani',
     action: 'DISPATCH_ASSIGN',
     module: 'Dispatch',
     detail: 'HT-11 → EX-01 Face C',
@@ -33,10 +33,10 @@ const LOGS: AuditRow[] = [
   {
     id: '3',
     time: '14:12:40 UTC',
-    actor: 'M. Torres',
-    action: 'WO_UPDATE',
-    module: 'Maintenance',
-    detail: 'WO-2401 status → In Progress',
+    actor: 'Arsyil',
+    action: 'FLEET_ASSIGN',
+    module: 'Fleet',
+    detail: 'HT-04 reassigned to Haul Route South',
     ip: '10.12.5.8',
   },
   {
@@ -51,7 +51,7 @@ const LOGS: AuditRow[] = [
   {
     id: '5',
     time: '13:40:02 UTC',
-    actor: 'A. Liu',
+    actor: 'Putri',
     action: 'REPORT_VIEW',
     module: 'Reports',
     detail: 'Opened production analytics desk',
@@ -60,7 +60,7 @@ const LOGS: AuditRow[] = [
   {
     id: '6',
     time: '12:15:33 UTC',
-    actor: 'Alex R.',
+    actor: 'Aldi',
     action: 'SETTINGS_UPDATE',
     module: 'Administration',
     detail: 'Shift code SHIFT-B confirmed',
@@ -69,19 +69,19 @@ const LOGS: AuditRow[] = [
   {
     id: '7',
     time: '11:02:11 UTC',
-    actor: 'S. Park',
-    action: 'PART_ISSUE',
-    module: 'Spare Parts',
-    detail: 'SP-TPMS-12 issued to HT-04',
+    actor: 'Arsyil',
+    action: 'DISPATCH_CYCLE',
+    module: 'Dispatch',
+    detail: 'Optimal cycle route calibrated for Pit North',
     ip: '10.12.5.12',
   },
   {
     id: '8',
     time: '09:45:00 UTC',
-    actor: 'K. Okada',
-    action: 'USER_INVITE',
+    actor: 'Imbran',
+    action: 'USER_MANAGEMENT',
     module: 'User Management',
-    detail: 'Invite sent: yard.tech@mineops.local',
+    detail: 'Operational role privileges validated for site staff',
     ip: '10.12.0.5',
   },
 ];

@@ -9,7 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 import { ALERTS, FLEET, MINES, NOTIFICATIONS, SHIFTS } from '../data/enterprise';
-import { buildCsv, triggerBrowserDownload } from '../lib/export';
+import {
+  buildCsv,
+  generateInviteCode,
+  triggerBrowserDownload,
+} from '../lib/export';
 import {
   applyTheme,
   loadPrefs,
@@ -21,6 +25,7 @@ import {
 import type {
   EquipmentRow,
   FleetAsset,
+  GpsDevice,
   MineSite,
   NavItemId,
   NotificationItem,
@@ -87,7 +92,7 @@ export interface OpsSettings {
   theme: ThemeMode;
 }
 
-interface OpsContextValue {
+export interface OpsContextValue {
   activeNav: NavItemId;
   setActiveNav: (id: NavItemId) => void;
   collapsed: boolean;
@@ -138,8 +143,8 @@ interface OpsContextValue {
 
   settings: OpsSettings;
   updateSettings: (patch: Partial<OpsSettings>) => void;
-  /** Translate UI string by key using current locale */
-  t: (key: string) => string;
+  /** Translate UI string by key using current locale, with optional params for interpolation */
+  t: (key: string, params?: Record<string, string | number>) => string;
   locale: Locale;
   theme: ThemeMode;
 
@@ -150,6 +155,16 @@ interface OpsContextValue {
   selectedAssetId: string | null;
   setSelectedAssetId: (id: string | null) => void;
   openAssetDetail: (id: string) => void;
+
+  /** GPS Devices for tracking */
+  gpsDevices: GpsDevice[];
+  addGpsDevice: (device: Omit<GpsDevice, 'id' | 'createdAt'>) => GpsDevice;
+  removeGpsDevice: (id: string) => void;
+  updateGpsDevicePosition: (id: string, lat: number, lng: number, batteryPct?: number, accuracyM?: number) => void;
+  generateDeviceInvite: (deviceId: string) => string;
+  registerGpsDevice: (code: string, payload: { fingerprint: string; platform: 'ios' | 'android'; lat: number; lng: number; accuracy: number }) => boolean;
+  resetDailyTrails: () => void;
+  resetSingleDeviceTrail: (key: string) => void;
 
   /**
    * Export CSV: try browser download + always open preview modal
@@ -194,6 +209,57 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     labels: true,
     heat: false,
   });
+  const [gpsDevices, setGpsDevices] = useState<GpsDevice[]>([
+    {
+      id: 'gps-1',
+      name: "Andi's Phone",
+      type: 'phone',
+      platform: 'android',
+      ownerId: 'op-1',
+      ownerName: 'Andi Pratama',
+      assetId: 'HT-04',
+      assetUnit: 'HT-04',
+      status: 'online',
+      lastSeen: new Date().toISOString(),
+      batteryPct: 87,
+      accuracyM: 4,
+      lat: -6.85,
+      lng: 112.52,
+      trail: [
+        { lat: -6.8, lng: 112.45, ts: new Date(Date.now() - 3600000).toISOString() },
+        { lat: -6.82, lng: 112.48, ts: new Date(Date.now() - 1800000).toISOString() },
+        { lat: -6.84, lng: 112.5, ts: new Date(Date.now() - 900000).toISOString() },
+        { lat: -6.85, lng: 112.52, ts: new Date().toISOString() },
+      ],
+      inviteCode: 'INV-ABC123',
+      inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+    },
+    {
+      id: 'gps-2',
+      name: "Budi's Beacon",
+      type: 'beacon',
+      platform: 'ble',
+      ownerId: 'op-2',
+      ownerName: 'Budi Santoso',
+      assetId: 'EX-01',
+      assetUnit: 'EX-01',
+      status: 'online',
+      lastSeen: new Date().toISOString(),
+      batteryPct: 92,
+      accuracyM: 3,
+      lat: -6.78,
+      lng: 112.55,
+      trail: [
+        { lat: -6.75, lng: 112.52, ts: new Date(Date.now() - 3600000).toISOString() },
+        { lat: -6.77, lng: 112.54, ts: new Date(Date.now() - 1800000).toISOString() },
+        { lat: -6.78, lng: 112.55, ts: new Date().toISOString() },
+      ],
+      inviteCode: 'INV-XYZ789',
+      inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
+      createdAt: new Date(Date.now() - 172800000).toISOString(),
+    },
+  ]);
   const prefs = loadPrefs();
   const [settings, setSettings] = useState<OpsSettings>({
     autoRefresh: true,
@@ -202,7 +268,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     unitsMetric: true,
     shiftCode: 'SHIFT-B',
     siteCode: 'PIT-N',
-    opsLead: 'Alex R.',
+    opsLead: 'Aldi',
     locale: prefs.locale,
     theme: prefs.theme,
   });
@@ -217,6 +283,78 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const id = window.setInterval(() => setLastSync(new Date()), 30000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // Poll GPS device updates from server/relay endpoint so mobile devices sync in real-time across network/tunnel
+  useEffect(() => {
+    const syncInterval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/gps/devices');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.devices) && data.devices.length > 0) {
+          setGpsDevices((prev) => {
+            let updated = [...prev];
+            for (const serverDev of data.devices) {
+              // Match by inviteCode, id, code, unitLabel, or name
+              const idx = updated.findIndex(
+                (d) =>
+                  (d.inviteCode && d.inviteCode === serverDev.code) ||
+                  (d.id && d.id === serverDev.id) ||
+                  (d.assetUnit && d.assetUnit === serverDev.code) ||
+                  (d.assetUnit && d.assetUnit === serverDev.unitLabel) ||
+                  (d.name && d.name === serverDev.name && serverDev.name !== 'HP GPS Device' && serverDev.name !== 'Perangkat HP')
+              );
+              const newName = serverDev.deviceName || serverDev.name || (serverDev.unitLabel ? `Device ${serverDev.unitLabel}` : undefined);
+              const newUnit = serverDev.unitLabel || serverDev.code;
+
+              if (idx >= 0) {
+                updated[idx] = {
+                  ...updated[idx],
+                  name: newName || updated[idx].name,
+                  assetUnit: newUnit || updated[idx].assetUnit,
+                  assetId: newUnit || updated[idx].assetId,
+                  lat: serverDev.lat ?? updated[idx].lat,
+                  lng: serverDev.lng ?? updated[idx].lng,
+                  accuracyM: serverDev.accuracyM ?? updated[idx].accuracyM,
+                  batteryPct: serverDev.batteryPct ?? updated[idx].batteryPct,
+                  status: 'online',
+                  lastSeen: serverDev.lastSeen || new Date().toISOString(),
+                  registeredAt: updated[idx].registeredAt || new Date().toISOString(),
+                  trail: serverDev.trail && serverDev.trail.length > 0 ? serverDev.trail : updated[idx].trail,
+                };
+              } else if (serverDev.code || serverDev.id) {
+                // Add device registered from mobile
+                updated.push({
+                  id: serverDev.id || `gps-${Date.now()}`,
+                  name: newName || 'HP GPS Device',
+                  type: 'phone',
+                  platform: serverDev.platform || 'android',
+                  ownerId: 'op-mobile',
+                  ownerName: serverDev.ownerName || 'Driver / Field Operator',
+                  assetId: newUnit || '',
+                  assetUnit: newUnit || '',
+                  status: 'online',
+                  lastSeen: serverDev.lastSeen || new Date().toISOString(),
+                  batteryPct: serverDev.batteryPct || 100,
+                  accuracyM: serverDev.accuracyM || 5,
+                  lat: serverDev.lat || 0,
+                  lng: serverDev.lng || 0,
+                  trail: serverDev.trail || [],
+                  inviteCode: serverDev.code,
+                  createdAt: new Date().toISOString(),
+                });
+              }
+            }
+            return updated;
+          });
+        }
+      } catch (err) {
+        // Silently ignore network polling errors
+      }
+    }, 800);
+
+    return () => clearInterval(syncInterval);
   }, []);
 
   const mine = MINES.find((m) => m.id === mineId) ?? MINES[0];
@@ -318,7 +456,18 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [pushToast, settings.locale],
   );
 
-  const t = useCallback((key: string) => translate(settings.locale, key), [settings.locale]);
+  const t = useCallback(
+    (key: string, params?: Record<string, string | number>) => {
+      let translated = translate(settings.locale, key);
+      if (params) {
+        Object.entries(params).forEach(([k, v]) => {
+          translated = translated.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+        });
+      }
+      return translated;
+    },
+    [settings.locale],
+  );
 
   const openAssetDetail = useCallback((id: string) => {
     setSelectedAssetId(id);
@@ -346,6 +495,154 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     },
     [openModal, pushToast],
   );
+
+  // --- GPS Device Tracking ---
+  const addGpsDevice = useCallback(
+    (device: Omit<GpsDevice, 'id' | 'createdAt'>): GpsDevice => {
+      const newDevice: GpsDevice = {
+        ...device,
+        id: `gps-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date().toISOString(),
+      };
+      setGpsDevices((prev) => [...prev, newDevice]);
+      pushToast({ tone: 'success', title: 'Device added', message: newDevice.name });
+      if (newDevice.inviteCode) {
+        fetch('/api/gps/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: newDevice.inviteCode,
+            id: newDevice.id,
+            name: newDevice.name,
+            unitLabel: newDevice.assetUnit || newDevice.assetId,
+          }),
+        }).catch(() => {});
+      }
+      return newDevice;
+    },
+    [pushToast],
+  );
+
+  const removeGpsDevice = useCallback(
+    (id: string) => {
+      setGpsDevices((prev) => prev.filter((d) => d.id !== id));
+      pushToast({ tone: 'info', title: 'Device removed' });
+    },
+    [pushToast],
+  );
+
+  const updateGpsDevicePosition = useCallback(
+    (
+      id: string,
+      lat: number,
+      lng: number,
+      batteryPct?: number,
+      accuracyM?: number
+    ) => {
+      setGpsDevices((prev) =>
+        prev.map((d) => {
+          if (d.id !== id) return d;
+          const trailPoint = { lat, lng, ts: new Date().toISOString() };
+          // Keep only last 24h trail (reset at shift change)
+          const dayStart = new Date();
+          dayStart.setHours(0, 0, 0, 0);
+          const filteredTrail = d.trail.filter(
+            (p) => new Date(p.ts) >= dayStart
+          );
+          return {
+            ...d,
+            lat,
+            lng,
+            status: 'online' as const,
+            lastSeen: new Date().toISOString(),
+            batteryPct: batteryPct ?? d.batteryPct,
+            accuracyM: accuracyM ?? d.accuracyM,
+            trail: [...filteredTrail, trailPoint].slice(-200), // cap points
+          };
+        })
+      );
+    },
+    []
+  );
+
+  const generateDeviceInvite = useCallback(
+    (deviceId: string): string => {
+      const code = generateInviteCode();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+      setGpsDevices((prev) =>
+        prev.map((d) =>
+          d.id === deviceId ? { ...d, inviteCode: code, inviteExpiresAt: expiresAt } : d
+        )
+      );
+      fetch('/api/gps/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, id: deviceId }),
+      }).catch(() => {});
+      pushToast({ tone: 'info', title: 'Invite link generated', message: `Valid 7 days` });
+      // Use VITE_PUBLIC_URL if set (production), fallback to window.location.origin (dev)
+      const baseUrl = import.meta.env.VITE_PUBLIC_URL ?? window.location.origin;
+      return `${baseUrl}/track/join?code=${code}`;
+    },
+    [pushToast],
+  );
+
+  const registerGpsDevice = useCallback(
+    (code: string, payload: { fingerprint: string; platform: 'ios' | 'android'; lat: number; lng: number; accuracy: number }) => {
+      const device = gpsDevices.find(d => d.inviteCode === code);
+      if (!device) return false;
+
+      const now = new Date().getTime();
+      const expires = device.inviteExpiresAt ? new Date(device.inviteExpiresAt).getTime() : 0;
+      if (expires && now > expires) return false;
+
+      if (device.status === 'online' && device.registeredAt) return false;
+
+      setGpsDevices((prev) =>
+        prev.map((d) =>
+          d.inviteCode === code
+            ? {
+                ...d,
+                status: 'online',
+                lastSeen: new Date().toISOString(),
+                registeredAt: new Date().toISOString(),
+                lat: payload.lat,
+                lng: payload.lng,
+                accuracyM: payload.accuracy,
+                platform: payload.platform,
+                trail: [{ lat: payload.lat, lng: payload.lng, ts: new Date().toISOString() }],
+              }
+            : d
+        )
+      );
+      pushToast({ tone: 'success', title: 'Device registered', message: device.name });
+      return true;
+    },
+    [gpsDevices, pushToast],
+  );
+
+  const resetDailyTrails = useCallback(() => {
+    setGpsDevices((prev) =>
+      prev.map((d) => ({ ...d, trail: [] }))
+    );
+    pushToast({ tone: 'info', title: 'Daily trails reset', message: 'All 24h motion trails cleared' });
+  }, [pushToast]);
+
+  const resetSingleDeviceTrail = useCallback((key: string) => {
+    setGpsDevices((prev) =>
+      prev.map((d) =>
+        d.id === key || d.inviteCode === key || d.assetUnit === key || d.name === key || `GPS-${d.id}` === key
+          ? { ...d, trail: [] }
+          : d
+      )
+    );
+    fetch('/api/gps/reset-trail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: key, id: key }),
+    }).catch(() => {});
+    pushToast({ tone: 'info', title: 'Riwayat jejak di-reset', message: `Trail pergerakan untuk ${key} telah dibersihkan.` });
+  }, [pushToast]);
 
   const alertCount = useMemo(() => alerts.filter((a) => !a.acknowledged).length, [alerts]);
   const unreadNotifications = useMemo(
@@ -415,6 +712,15 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       toggleCopilot: () => setCopilotOpen((o) => !o),
       copilotWidth,
       setCopilotWidth,
+      // GPS Device Tracking
+      gpsDevices,
+      addGpsDevice,
+      removeGpsDevice,
+      updateGpsDevicePosition,
+      generateDeviceInvite,
+      registerGpsDevice,
+      resetDailyTrails,
+      resetSingleDeviceTrail,
     }),
     [
       activeNav,
@@ -454,6 +760,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       selectedAssetId,
       openAssetDetail,
       exportCsv,
+      gpsDevices,
+      addGpsDevice,
+      removeGpsDevice,
+      updateGpsDevicePosition,
+      generateDeviceInvite,
+      registerGpsDevice,
+      resetDailyTrails,
+      resetSingleDeviceTrail,
     ],
   );
 

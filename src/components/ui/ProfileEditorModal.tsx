@@ -100,9 +100,12 @@ export default function ProfileEditorModal({
         </div>
 
         <input
+          id="profile-avatar-file-input"
+          name="avatarFile"
           ref={fileRef}
           type="file"
           accept="image/*"
+          aria-label="Upload profile photo"
           className="hidden"
           onChange={(e) => onFile(e.target.files?.[0] ?? null)}
         />
@@ -126,11 +129,14 @@ export default function ProfileEditorModal({
           )}
         </div>
 
-        <label className="w-full">
+        <label htmlFor="profile-display-name-input" className="w-full">
           <span className="mb-1 block text-[10px] font-semibold tracking-wider text-[#6A737C]">
             DISPLAY NAME
           </span>
           <input
+            id="profile-display-name-input"
+            name="displayName"
+            autoComplete="name"
             value={name}
             onChange={(e) => {
               setName(e.target.value);

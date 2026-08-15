@@ -57,3 +57,12 @@ id_ed25519
 *.tar.gz
 *.zip
 mining-command-fms-source*
+
+# Docker & local testing artifacts
+Dockerfile
+docker-compose.yml
+nginx.conf
+.dockerignore
+
+# Analysis output
+graphify-out/

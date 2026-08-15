@@ -36,8 +36,8 @@ const ROLE_TONE: Record<string, string> = {
 
 export default function LoginPage() {
   const { login, loginAsDemo, demoUsers } = useAuth();
-  const [email, setEmail] = useState('alex.r@mineops.local');
-  const [password, setPassword] = useState('ops123');
+  const [email, setEmail] = useState('imbran@mineops.local');
+  const [password, setPassword] = useState('admin123');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -114,7 +114,7 @@ export default function LoginPage() {
           </h1>
           <p className="mt-4 max-w-md text-[13px] leading-relaxed text-[#8A949C]">
             Role-based sessions keep pit boards, work orders, and admin tools isolated by duty.
-            Sign in with your site credentials or use a demo role for walkthroughs.
+            Sign in with your site credentials or select an operational role below.
           </p>
 
           <ul className="mt-8 grid max-w-md gap-3 sm:grid-cols-2">
@@ -146,18 +146,20 @@ export default function LoginPage() {
                 OPERATOR SIGN-IN
               </h2>
               <p className="mt-1 text-[11px] text-[#6A737C]">
-                Authenticated channel · demo IdP mock
+                Authenticated channel · Site SSO & RBAC
               </p>
             </div>
 
             <form onSubmit={onSubmit} className="space-y-3.5">
-              <label className="block">
+              <label htmlFor="login-email" className="block">
                 <span className="mb-1 block text-[10px] font-semibold tracking-[0.12em] text-[#6A737C]">
                   EMAIL
                 </span>
                 <div className="relative">
                   <UserRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5A636C]" />
                   <input
+                    id="login-email"
+                    name="email"
                     type="email"
                     autoComplete="username"
                     value={email}
@@ -168,13 +170,15 @@ export default function LoginPage() {
                 </div>
               </label>
 
-              <label className="block">
+              <label htmlFor="login-password" className="block">
                 <span className="mb-1 block text-[10px] font-semibold tracking-[0.12em] text-[#6A737C]">
                   PASSWORD
                 </span>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5A636C]" />
                   <input
+                    id="login-password"
+                    name="password"
                     type={showPw ? 'text' : 'password'}
                     autoComplete="current-password"
                     value={password}
@@ -206,7 +210,7 @@ export default function LoginPage() {
 
             <div className="my-5 flex items-center gap-3">
               <div className="h-px flex-1 bg-[#2A3036]" />
-              <span className="text-[10px] tracking-wider text-[#5A636C]">DEMO ROLES</span>
+              <span className="text-[10px] tracking-wider text-[#5A636C]">OPERATIONAL ROLES</span>
               <div className="h-px flex-1 bg-[#2A3036]" />
             </div>
 
@@ -230,13 +234,13 @@ export default function LoginPage() {
                       {u.roleLabel} · {u.site}
                     </div>
                   </div>
-                  <span className="text-[9px] font-semibold tracking-wide text-[#1ADBDE]">USE</span>
+                  <span className="text-[9px] font-semibold tracking-wide text-[#1ADBDE]">SIGN IN</span>
                 </button>
               ))}
             </div>
 
             <p className="mt-4 text-center text-[10px] leading-relaxed text-[#4A545C]">
-              Demo passwords: admin123 · ops123 · dispatch123 · maint123 · analyst123
+              Credentials: imbran@mineops.local (admin123) · aldi / dani / arsyil / putri (ops123)
             </p>
           </div>
         </section>

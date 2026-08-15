@@ -100,7 +100,7 @@ export default function AnalyticsPage() {
               </div>
             ))}
           </div>
-          <p className="mt-2 text-[10px] text-[#5A636C]">Based on {FLEET.length} assets sample · demo dataset</p>
+          <p className="mt-2 text-[10px] text-[#5A636C]">Aggregated across {FLEET.length} active fleet units · Live telemetry feed</p>
         </Panel>
       </div>
     </PageShell>

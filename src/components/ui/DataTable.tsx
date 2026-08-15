@@ -103,18 +103,25 @@ export default function DataTable<T>({
           <div className="relative min-w-[200px] flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5A636C]" />
             <input
+              id="datatable-search-input"
+              name="tableSearch"
+              type="search"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
                 setPage(0);
               }}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder || 'Search table records'}
               className="h-8 w-full rounded-md border border-[#2A3036] bg-[#0D1116] py-1.5 pl-8 pr-3 text-[12px] text-[#E8ECEF] outline-none placeholder:text-[#5A636C] focus:border-[#1ADBDE]/60"
             />
           </div>
         )}
         <div className="relative">
           <select
+            id="datatable-column-select"
+            name="columnVisibility"
+            aria-label="Toggle visible columns"
             className="h-8 appearance-none rounded-md border border-[#2A3036] bg-[#0D1116] px-2 pr-7 text-[11px] text-[#A8B0B7] outline-none focus:border-[#1ADBDE]/60"
             value=""
             onChange={(e) => {
@@ -147,6 +154,8 @@ export default function DataTable<T>({
               {selectable && (
                 <th className="w-10 px-3 py-2">
                   <input
+                    id="datatable-select-all-page"
+                    name="selectAllPage"
                     type="checkbox"
                     checked={!!allSelected}
                     onChange={() => onToggleSelectAll?.(pageIds)}
@@ -195,6 +204,9 @@ export default function DataTable<T>({
                   {selectable && (
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                       <input
+                        id={`datatable-select-row-${id}`}
+                        name={`selectRow_${id}`}
+                        aria-label={`Select row ${id}`}
                         type="checkbox"
                         checked={!!selectedIds?.has(id)}
                         onChange={() => onToggleSelect?.(id)}
@@ -232,6 +244,9 @@ export default function DataTable<T>({
         </div>
         <div className="flex items-center gap-2">
           <select
+            id="datatable-page-size-select"
+            name="pageSize"
+            aria-label="Records per page"
             value={pageSize}
             onChange={(e) => {
               setPageSize(Number(e.target.value));

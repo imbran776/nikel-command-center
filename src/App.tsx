@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { Route, Routes, useLocation } from 'react-router-dom';
 import Header from './components/Header';
 import ModalsHost from './components/ModalsHost';
 import Sidebar from './components/Sidebar';
@@ -25,6 +26,9 @@ import ReportsPage from './pages/ReportsPage';
 import RolesPage from './pages/RolesPage';
 import SparePartsPage from './pages/SparePartsPage';
 import UsersPage from './pages/UsersPage';
+import MobileTrackerPage from './pages/MobileTrackerPage';
+import DeviceTrackingPage from './pages/DeviceTrackingPage';
+import DeviceRegistrationPage from './pages/DeviceRegistrationPage';
 import type { NavItemId } from './types/fms';
 
 function AccessDenied({ module }: { module: string }) {
@@ -58,6 +62,16 @@ function Guarded({ id, children }: { id: NavItemId; children: ReactNode }) {
 export default function App() {
   const { isAuthenticated, user, canAccess } = useAuth();
   const { activeNav, setActiveNav, alertCount, settings, copilotOpen } = useOps();
+  const location = useLocation();
+
+  const isTrackerMode =
+    location.pathname.startsWith('/track') ||
+    location.hash === '#track' ||
+    location.search.includes('track=true');
+  const isRegistrationMode =
+    location.pathname.startsWith('/track/join') ||
+    location.pathname.startsWith('/track/register') ||
+    location.search.includes('code=');
 
   // If current nav is forbidden after role switch / login, bounce to first allowed module
   useEffect(() => {
@@ -67,6 +81,16 @@ export default function App() {
       setActiveNav(fallback);
     }
   }, [user, activeNav, canAccess, setActiveNav]);
+
+  if (isTrackerMode) {
+    return (
+      <Routes>
+        <Route path="/track" element={<MobileTrackerPage />} />
+        <Route path="/track/join" element={<DeviceRegistrationPage />} />
+        <Route path="/track/register" element={<DeviceRegistrationPage />} />
+      </Routes>
+    );
+  }
 
   if (!isAuthenticated) {
     return <LoginPage />;
@@ -104,6 +128,11 @@ export default function App() {
             {activeNav === 'fleet' && (
               <Guarded id="fleet">
                 <FleetPage />
+              </Guarded>
+            )}
+            {activeNav === 'device-tracking' && (
+              <Guarded id="device-tracking">
+                <DeviceTrackingPage />
               </Guarded>
             )}
             {activeNav === 'production' && (

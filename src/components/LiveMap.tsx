@@ -6,30 +6,48 @@ import {
   DraftingCompass,
   Eye,
   EyeOff,
+  Globe,
   Hexagon,
   Layers,
+  Loader2,
   LocateFixed,
+  Map as MapIcon,
   MapPin as MapPinIcon,
   Maximize2,
   Minimize2,
   Mountain,
   Navigation,
   Pentagon,
+  Plus,
   Ruler,
+  Satellite,
   Scan,
+  Search,
+  Smartphone,
   Truck,
   Wrench,
   X,
 } from 'lucide-react';
+import AddDeviceModal from './modals/AddDeviceModal';
+
+import L from 'leaflet';
+import {
+  Circle,
+  MapContainer,
+  Marker,
+  Polygon,
+  Polyline,
+  TileLayer,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet';
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { useOps } from '../contexts/OpsContext';
 import {
@@ -38,16 +56,37 @@ import {
   PIT_ZONE_LEGEND,
   PIT_ZONES_LEGEND,
 } from '../data/mockData';
+import {
+  CONTOUR_RINGS,
+  DEFAULT_ZOOM,
+  GEOFENCE_COORDS,
+  HAUL_ROADS,
+  latLngToMapXY,
+  mapXYToLatLng,
+  MAX_ZOOM,
+  MINE_CENTER,
+  MIN_ZOOM,
+  PIT_PINS,
+  PIT_ZONES,
+  POINTS_OF_INTEREST,
+  TILE_LAYERS,
+} from '../lib/mapConfig';
 import type { FleetAsset, VehicleMarker } from '../types/fms';
 import StatusBadge from './ui/StatusBadge';
+
+/* ─── Props ──────────────────────────────────────────────────── */
 
 interface LiveMapProps {
   vehicles: VehicleMarker[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onFocusUnit: (x: number, y: number, id?: string) => void;
-  focus: { x: number; y: number } | null;
+  onFocusUnit: (x: number, y: number, id?: string, lat?: number, lng?: number) => void;
+  focus: { x: number; y: number; lat?: number; lng?: number } | null;
   expanded?: boolean;
+  onAddVehicle?: (v: Omit<VehicleMarker, 'x' | 'y'> & { x?: number; y?: number }) => void;
+  mobileGpsActive?: boolean;
+  mobileGpsError?: string | null;
+  onToggleMobileGps?: () => void;
 }
 
 type PanelId = 'layers' | 'fleet' | 'follow' | 'alerts' | 'tools' | null;
@@ -99,10 +138,321 @@ const DEFAULT_ALERTS: AlertLayer = {
   maintenance: true,
 };
 
+/* ─── Custom marker icon builders ────────────────────────────── */
+
+function createVehicleIcon(
+  type: 'haul' | 'excavator' | 'gps',
+  label: string,
+  detail: string,
+  showLabels: boolean,
+  isActive: boolean,
+  isAlert: boolean,
+): L.DivIcon {
+  const color = isAlert
+    ? '#D6403E'
+    : isActive
+      ? '#1ADBDE'
+      : type === 'gps'
+        ? '#1ADBDE'
+        : '#F6A214';
+
+  const pingHtml = (isActive || isAlert)
+    ? `<div style="position:absolute;inset:-5px;border-radius:50%;border:1.5px solid ${color};animation:pulse 1.8s infinite;opacity:0.75;pointer-events:none"></div>`
+    : '';
+
+  const labelHtml = showLabels
+    ? `<div style="position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:rgba(13,17,22,0.92);border:1px solid ${color}88;border-radius:4px;padding:2px 6px;font-size:9.5px;font-weight:700;color:#E8ECEF;white-space:nowrap;pointer-events:none;box-shadow:0 3px 8px rgba(0,0,0,0.6);backdrop-filter:blur(4px)">${label}</div>`
+    : '';
+
+  const html = `<div style="position:relative;display:flex;align-items:center;justify-content:center;width:18px;height:18px;cursor:pointer">
+    ${pingHtml}
+    <div style="width:10px;height:10px;border-radius:50%;background:${color};border:2px solid #0D1116;box-shadow:0 0 10px ${color}"></div>
+    ${labelHtml}
+  </div>`;
+
+  return L.divIcon({
+    html,
+    className: 'leaflet-vehicle-marker-dot',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+}
+
+function createPinIcon(letter: string): L.DivIcon {
+  return L.divIcon({
+    html: `<div style="width:22px;height:22px;border-radius:50%;background:#0D1116;border:1.5px solid #E8ECEF;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#E8ECEF;font-family:Inter,system-ui,sans-serif">${letter}</div>`,
+    className: 'leaflet-pin-marker',
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+function createPoiIcon(label: string, type: 'dump' | 'load' | 'facility'): L.DivIcon {
+  const color = type === 'dump' ? '#D6403E' : type === 'load' ? '#3AC7A3' : '#7A848C';
+  return L.divIcon({
+    html: `<div style="font-size:8px;font-weight:600;color:${color};background:rgba(13,17,22,0.85);border:1px solid ${color}44;border-radius:4px;padding:2px 5px;white-space:nowrap;letter-spacing:0.05em;backdrop-filter:blur(4px)">${label}</div>`,
+    className: 'leaflet-poi-marker',
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
+/* ─── Map Controller sub-component (inside MapContainer) ─────── */
+
+function MapController({
+  focus,
+  followMode,
+  setFollowMode,
+  selectedId,
+  vehicles,
+  zoom,
+  setZoom,
+  mapTool,
+  measurePts,
+  setMeasurePts,
+  pushToast,
+}: {
+  focus: { x: number; y: number; lat?: number; lng?: number } | null;
+  followMode: boolean;
+  setFollowMode: (f: boolean) => void;
+  selectedId: string | null;
+  vehicles: VehicleMarker[];
+  zoom: number;
+  setZoom: React.Dispatch<React.SetStateAction<number>>;
+  mapTool: MapTool;
+  measurePts: { lat: number; lng: number }[];
+  setMeasurePts: React.Dispatch<React.SetStateAction<{ lat: number; lng: number }[]>>;
+  pushToast: (t: { tone: 'info' | 'success' | 'warning' | 'critical'; title: string; message?: string }) => void;
+}) {
+  const map = useMap();
+  const lastPosRef = useRef<L.LatLngTuple | null>(null);
+
+  // Sync external zoom changes to map (with float precision guard)
+  useEffect(() => {
+    const currentZoom = map.getZoom();
+    if (Math.abs(currentZoom - zoom) > 0.5) {
+      map.setZoom(zoom);
+    }
+  }, [zoom, map]);
+
+  // Listen for map zoom & drag events
+  useMapEvents({
+    zoomend: () => {
+      const z = Math.round(map.getZoom());
+      setZoom((prev) => (prev !== z ? z : prev));
+    },
+    dragstart: () => {
+      // Auto-pause follow mode if user manually drags/pans the map to prevent camera fighting/jitter
+      if (followMode) {
+        setFollowMode(false);
+        pushToast({
+          tone: 'info',
+          title: 'Follow mode paused',
+          message: 'Manual map pan detected.',
+        });
+      }
+    },
+    click: (e) => {
+      if (mapTool !== 'measure') return;
+      const { lat, lng } = e.latlng;
+      setMeasurePts((pts) => {
+        if (pts.length >= 2) return [{ lat, lng }];
+        const next = [...pts, { lat, lng }];
+        if (next.length === 2) {
+          const distM = Math.round(
+            map.distance(
+              L.latLng(next[0].lat, next[0].lng),
+              L.latLng(next[1].lat, next[1].lng),
+            ),
+          );
+          pushToast({
+            tone: 'info',
+            title: 'Distance measured',
+            message: `≈ ${distM} m`,
+          });
+        }
+        return next;
+      });
+    },
+  });
+
+  // Focus on unit or search location
+  useEffect(() => {
+    if (focus) {
+      const latlng: L.LatLngTuple =
+        typeof focus.lat === 'number' && typeof focus.lng === 'number'
+          ? [focus.lat, focus.lng]
+          : mapXYToLatLng(focus.x, focus.y);
+      map.flyTo(latlng, Math.max(map.getZoom(), 15), { duration: 0.8 });
+    }
+  }, [focus, map]);
+
+  // Smooth Follow mode without camera jitter
+  useEffect(() => {
+    if (!followMode || !selectedId) {
+      lastPosRef.current = null;
+      return;
+    }
+    const v = vehicles.find((x) => x.id === selectedId || x.label === selectedId || `GPS-${x.id}` === selectedId);
+    if (v) {
+      const latlng: L.LatLngTuple =
+        v.lat !== undefined && v.lng !== undefined
+          ? [v.lat, v.lng]
+          : mapXYToLatLng(v.x, v.y);
+
+      // Only move camera if position actually changed
+      if (lastPosRef.current) {
+        const dLat = Math.abs(lastPosRef.current[0] - latlng[0]);
+        const dLng = Math.abs(lastPosRef.current[1] - latlng[1]);
+        if (dLat < 0.000001 && dLng < 0.000001) return;
+      }
+
+      lastPosRef.current = latlng;
+      map.panTo(latlng, { animate: true, duration: 0.4 });
+    }
+  }, [followMode, selectedId, vehicles, map]);
+
+  return null;
+}
+
+/* ─── Location Search Component ─────────────────────────────────── */
+
+function LocationSearch({
+  onFlyTo,
+}: {
+  onFlyTo: (lat: number, lng: number, zoom?: number) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<{ name: string; lat: number; lng: number }[]>([]);
+  const [open, setOpen] = useState(false);
+
+  const PRESETS = [
+    { name: 'Pit North (KalSel)', lat: -3.4500, lng: 114.8400 },
+    { name: 'Banjarmasin', lat: -3.3194, lng: 114.5908 },
+    { name: 'Samarinda', lat: -0.5022, lng: 117.1536 },
+    { name: 'Balikpapan', lat: -1.2379, lng: 116.8529 },
+    { name: 'Jakarta', lat: -6.2088, lng: 106.8456 },
+  ];
+
+  const handleSearch = async (val: string) => {
+    setQuery(val);
+    if (!val.trim()) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+
+    const coordMatch = val.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
+    if (coordMatch) {
+      const lat = parseFloat(coordMatch[1]);
+      const lng = parseFloat(coordMatch[2]);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setResults([{ name: `Koordinat: ${lat}, ${lng}`, lat, lng }]);
+        setOpen(true);
+        return;
+      }
+    }
+
+    const matchedPresets = PRESETS.filter((p) =>
+      p.name.toLowerCase().includes(val.toLowerCase()),
+    );
+
+    setResults(matchedPresets);
+    setOpen(true);
+
+    if (val.length >= 3) {
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&limit=4`,
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const geoResults = data.map((item: any) => ({
+            name: item.display_name.split(',').slice(0, 2).join(','),
+            lat: parseFloat(item.lat),
+            lng: parseFloat(item.lon),
+          }));
+
+          setResults((prev) => {
+            const combined = [...matchedPresets];
+            geoResults.forEach((g: any) => {
+              if (!combined.some((c) => Math.abs(c.lat - g.lat) < 0.01 && Math.abs(c.lng - g.lng) < 0.01)) {
+                combined.push(g);
+              }
+            });
+            return combined;
+          });
+        }
+      } catch {
+        // network fallback
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const selectItem = (item: { name: string; lat: number; lng: number }) => {
+    setQuery(item.name);
+    setOpen(false);
+    onFlyTo(item.lat, item.lng, 15);
+  };
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1.5 rounded-md border border-[#2A3036] bg-[#0D1116] px-2 py-1 text-[10px]">
+        <Search className="h-3 w-3 text-[#7A848C]" />
+        <input
+          id="map-location-search-input"
+          name="locationSearch"
+          type="search"
+          value={query}
+          onChange={(e) => handleSearch(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder="Cari lokasi / Lat, Lng..."
+          aria-label="Cari lokasi atau koordinat Lat Lng"
+          className="w-24 bg-transparent text-[#E8ECEF] placeholder-[#5A636C] focus:outline-none sm:w-36 text-[10px]"
+        />
+        {loading && <Loader2 className="h-3 w-3 animate-spin text-[#1ADBDE]" />}
+        {query && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery('');
+              setOpen(false);
+            }}
+            className="text-[#5A636C] hover:text-[#E8ECEF]"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
+      {open && results.length > 0 && (
+        <div className="absolute right-0 top-full z-[2000] mt-1 w-52 overflow-hidden rounded-md border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md">
+          {results.map((r, i) => (
+            <button
+              key={`${r.lat}-${r.lng}-${i}`}
+              type="button"
+              onClick={() => selectItem(r)}
+              className="flex w-full items-center gap-2 border-b border-[#1E242A] px-2.5 py-1.5 text-left text-[10px] text-[#C8D0D6] last:border-0 hover:bg-[#1A2026] hover:text-[#1ADBDE]"
+            >
+              <MapPinIcon className="h-3 w-3 shrink-0 text-[#F6A214]" />
+              <span className="truncate">{r.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Main LiveMap Component ─────────────────────────────────── */
+
 /**
- * Live Map Panel — enterprise GIS control surface.
- * Dashboard layout around this component is FINAL; only map UX evolves here.
- * GPS / WebSocket / replay hooks are UI-ready but not live yet.
+ * Live Map Panel — enterprise GIS control surface powered by Leaflet.js.
+ * Replaces the static image approach with real interactive tile maps.
  */
 export default function LiveMap({
   vehicles,
@@ -111,10 +461,13 @@ export default function LiveMap({
   onFocusUnit,
   focus,
   expanded = false,
+  onAddVehicle,
+  mobileGpsActive = false,
+  mobileGpsError = null,
+  onToggleMobileGps,
 }: LiveMapProps) {
-  const { fleet, pushToast, openAssetDetail } = useOps();
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const { fleet, pushToast, openAssetDetail, gpsDevices, resetSingleDeviceTrail } = useOps();
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
   const [layers, setLayers] = useState<MapLayerState>(DEFAULT_LAYERS);
   const [fleetVis, setFleetVis] = useState<FleetVis>(DEFAULT_FLEET);
@@ -123,131 +476,97 @@ export default function LiveMap({
   const [mapTool, setMapTool] = useState<MapTool>('none');
   const [fullscreen, setFullscreen] = useState(false);
   const [inspectUnit, setInspectUnit] = useState<string | null>(null);
-  const [measurePts, setMeasurePts] = useState<{ x: number; y: number }[]>([]);
-  const [isPanning, setIsPanning] = useState(false);
-  const mapRef = useRef<HTMLDivElement>(null);
-  const panRef = useRef(pan);
-  const zoomRef = useRef(zoom);
-  const suppressClickRef = useRef(false);
-  const dragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    originPanX: number;
-    originPanY: number;
-    moved: boolean;
-  } | null>(null);
+  const [measurePts, setMeasurePts] = useState<{ lat: number; lng: number }[]>([]);
+  const [activeTile, setActiveTile] = useState('dark');
+  const [addDeviceModalOpen, setAddDeviceModalOpen] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    panRef.current = pan;
-  }, [pan]);
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
 
-  const clampZoom = (z: number) => Math.min(2.4, Math.max(0.85, +z.toFixed(2)));
-
-  const transform = useMemo(() => {
-    if (focus || (followMode && selectedId)) {
-      const target = focus
-        ?? (() => {
-          const v = vehicles.find((x) => x.id === selectedId || x.label === selectedId);
-          return v ? { x: v.x, y: v.y } : null;
-        })();
-      if (target) {
-        const dx = (50 - target.x) * 0.35;
-        const dy = (50 - target.y) * 0.35;
-        return `translate(${dx + pan.x}px, ${dy + pan.y}px) scale(${Math.max(zoom, 1.12)})`;
-      }
-    }
-    return `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-  }, [zoom, pan, focus, followMode, selectedId, vehicles]);
+  const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z)));
 
   const resetView = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setZoom(DEFAULT_ZOOM);
     setFollowMode(false);
-    dragRef.current = null;
-    setIsPanning(false);
     pushToast({ tone: 'info', title: 'Map view reset', message: 'Centered on Pit North default extent.' });
   }, [pushToast]);
 
-  const onMapPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    // Only primary button / touch; skip while measuring (clicks place points)
-    if (e.button !== 0) return;
-    if (mapTool === 'measure') return;
-    // Ignore if started on interactive chrome inside map
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-map-ui="true"]') || target.closest('button') || target.closest('input') || target.closest('label')) {
-      return;
-    }
-    dragRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      originPanX: panRef.current.x,
-      originPanY: panRef.current.y,
-      moved: false,
-    };
-    setIsPanning(true);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
+  const mergedVehicles = useMemo(() => {
+    const fromGpsDevices = gpsDevices
+      .filter((device) => Number.isFinite(device.lat) && Number.isFinite(device.lng))
+      .map((device) => {
+        const { x, y } = latLngToMapXY(device.lat, device.lng);
+        return {
+          id: device.id,
+          type: 'gps' as const,
+          label: device.assetUnit || device.name || 'GPS-DEVICE',
+          detail: `${device.status === 'online' ? 'Live' : 'Last seen'} · ${device.platform === 'android' ? 'Android' : device.platform === 'ios' ? 'iOS' : 'Beacon'} · ±${Math.round(device.accuracyM ?? 0)}m`,
+          x,
+          y,
+          lat: device.lat,
+          lng: device.lng,
+          trail: device.trail.map((point) => ({ lat: point.lat, lng: point.lng })),
+        } satisfies VehicleMarker;
+      });
 
-  const onMapPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    if (!drag.moved && Math.hypot(dx, dy) > 3) drag.moved = true;
-    if (!drag.moved) return;
-    // Pan in screen space; divide by zoom so drag feels 1:1 with the pointer
-    const z = zoomRef.current || 1;
-    setPan({
-      x: drag.originPanX + dx / z,
-      y: drag.originPanY + dy / z,
-    });
-    // Manual pan cancels follow framing until re-armed
-    if (followMode) setFollowMode(false);
-  };
+    return [...vehicles, ...fromGpsDevices];
+  }, [gpsDevices, vehicles]);
 
-  const endPan = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    if (drag.moved) {
-      // Prevent the trailing click after a drag
-      suppressClickRef.current = true;
-      window.setTimeout(() => {
-        suppressClickRef.current = false;
-      }, 0);
-    }
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* already released */
-    }
-    dragRef.current = null;
-    setIsPanning(false);
-  };
-
-  const onMapWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom((z) => clampZoom(z + delta));
-  };
-
-  const selectedAsset = useMemo(() => {
+  const selectedAsset = useMemo<FleetAsset | null>(() => {
     const key = inspectUnit || selectedId;
     if (!key) return null;
-    return (
+
+    const foundFleet =
       fleet.find((f) => f.unit === key || f.id === key) ??
       fleet.find((f) => {
-        const v = vehicles.find((x) => x.id === key || x.label === key);
+        const v = mergedVehicles.find((x) => x.id === key || x.label === key);
         return v && f.unit === v.label;
-      }) ??
-      null
+      });
+
+    if (foundFleet) return foundFleet;
+
+    // Fallback synthetic FleetAsset for GPS HP / Mobile Devices not in mock fleet array
+    const v = mergedVehicles.find(
+      (x) => x.id === key || x.label === key || `GPS-${x.id}` === key || x.id.endsWith(key)
     );
-  }, [inspectUnit, selectedId, fleet, vehicles]);
+
+    if (v) {
+      const dev = gpsDevices.find(
+        (d) => d.id === v.id || d.assetUnit === v.label || d.name === v.label || `GPS-${d.id}` === key
+      );
+      return {
+        id: v.id,
+        unit: v.label,
+        type: 'Mobile GPS Transmitter',
+        status: (dev?.status === 'online' ? 'Active' : 'Idle') as any,
+        operator: dev?.ownerName || 'Operator HP',
+        speedKph: 0,
+        payloadT: 0,
+        fuelPct: dev?.batteryPct ?? 98,
+        health: 100,
+        engine: 'Online',
+        assignment: 'Field Telemetry',
+        destination: 'Live Tracking',
+        lastUpdate: dev?.lastSeen ? new Date(dev.lastSeen).toLocaleTimeString() : 'Baru saja',
+        mapX: v.x ?? 50,
+        mapY: v.y ?? 50,
+        location: 'Pit Area',
+        lat: v.lat,
+        lng: v.lng,
+        connectivity: 'Cellular',
+        operatorId: 'OP-MOBILE',
+        engineHours: 0,
+        cycleMin: 0,
+        tripsToday: 0,
+        availability: 100,
+        utilization: 100,
+        speedLimit: 40,
+        speedAlert: false,
+        haulerCycleStage: 'Lokal',
+      } as FleetAsset;
+    }
+
+    return null;
+  }, [inspectUnit, selectedId, fleet, mergedVehicles, gpsDevices]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -266,6 +585,7 @@ export default function LiveMap({
     fleet.find((f) => f.unit === v.label);
 
   const showMarker = (v: VehicleMarker) => {
+    if (v.type === 'gps') return true;
     const asset = resolveAssetForMarker(v);
     const type = asset?.type ?? (v.type === 'excavator' ? 'Excavator' : 'Haul Truck');
     if (type === 'Haul Truck' || type === 'Water Truck') return fleetVis.trucks;
@@ -283,31 +603,6 @@ export default function LiveMap({
     return false;
   };
 
-  const onMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Skip click if user just finished panning
-    if (suppressClickRef.current) return;
-    if (mapTool !== 'measure' || !mapRef.current) return;
-    const rect = mapRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setMeasurePts((pts) => {
-      if (pts.length >= 2) return [{ x, y }];
-      const next = [...pts, { x, y }];
-      if (next.length === 2) {
-        const dx = next[1].x - next[0].x;
-        const dy = next[1].y - next[0].y;
-        // Approximate map units → rough metres for ops UI (placeholder until CRS)
-        const distM = Math.round(Math.hypot(dx, dy) * 42);
-        pushToast({
-          tone: 'info',
-          title: 'Distance measured',
-          message: `≈ ${distM} m (local map units · ready for CRS / GPS).`,
-        });
-      }
-      return next;
-    });
-  };
-
   const openUnit = (unit: string, x: number, y: number, id?: string) => {
     onSelect(id ?? unit);
     onFocusUnit(x, y, id ?? unit);
@@ -315,8 +610,11 @@ export default function LiveMap({
     setOpenPanel(null);
   };
 
+  const currentTile = TILE_LAYERS.find((t) => t.id === activeTile) ?? TILE_LAYERS[0];
+
   const mapBody = (
     <div
+      ref={mapContainerRef}
       className={`flex min-h-0 flex-col overflow-hidden border border-[#2A3036] bg-[#12171C] ${
         fullscreen
           ? 'h-full rounded-none border-0'
@@ -333,8 +631,14 @@ export default function LiveMap({
           </h3>
           <span className="flex items-center gap-1 rounded bg-[#1A2A28] px-1.5 py-0.5 text-[9px] tracking-wider text-[#3AC7A3]">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#3AC7A3]" />
-            OPS READY
+            LIVE
           </span>
+          {mobileGpsActive && (
+            <span className="flex items-center gap-1 rounded border border-[#1ADBDE]/40 bg-[#1ADBDE]/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-[#1ADBDE]">
+              <Smartphone className="h-3 w-3" />
+              HP GPS LIVE
+            </span>
+          )}
           {mapTool !== 'none' && (
             <span className="rounded bg-[#1A2428] px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-[#F6A214]">
               TOOL · {mapTool.replace('-', ' ').toUpperCase()}
@@ -347,7 +651,42 @@ export default function LiveMap({
           )}
         </div>
         <div className="flex items-center gap-2 text-[9px] text-[#5A636C]">
-          <span className="hidden sm:inline">GPS / WS · standby</span>
+          {/* Location Search Bar */}
+          <LocationSearch
+            onFlyTo={(lat, lng) => onFocusUnit(50, 50, 'search', lat, lng)}
+          />
+
+          {/* Button Tambah Perangkat / GPS HP */}
+          <button
+            type="button"
+            onClick={() => setAddDeviceModalOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-[#1ADBDE]/40 bg-[#1ADBDE]/10 px-2 py-1 text-[10px] font-semibold text-[#1ADBDE] hover:bg-[#1ADBDE] hover:text-[#0D1116] transition-colors"
+          >
+            <Plus className="h-3 w-3" />
+            <Smartphone className="h-3 w-3" />
+            <span className="hidden sm:inline">+ Perangkat / GPS HP</span>
+          </button>
+
+          {/* Tile layer switcher badges */}
+          <div className="hidden items-center gap-1 md:flex">
+            {TILE_LAYERS.map((tl) => (
+              <button
+                key={tl.id}
+                type="button"
+                onClick={() => setActiveTile(tl.id)}
+                className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold transition-colors ${
+                  activeTile === tl.id
+                    ? 'bg-[#1A2A2C] text-[#1ADBDE]'
+                    : 'text-[#5A636C] hover:bg-[#1A2026] hover:text-[#C8D0D6]'
+                }`}
+              >
+                {tl.id === 'satellite' && <Satellite className="h-3 w-3" />}
+                {tl.id === 'osm' && <MapIcon className="h-3 w-3" />}
+                {tl.id === 'dark' && <Globe className="h-3 w-3" />}
+                {tl.name}
+              </button>
+            ))}
+          </div>
           {fullscreen && (
             <button
               type="button"
@@ -360,184 +699,252 @@ export default function LiveMap({
         </div>
       </div>
 
-      <div
-        ref={mapRef}
-        className={`relative mx-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-lg border border-[#2A3036]/60 touch-none ${
-          isPanning ? 'cursor-grabbing' : mapTool === 'measure' ? 'cursor-crosshair' : 'cursor-grab'
-        }`}
-        onClick={onMapClick}
-        onPointerDown={onMapPointerDown}
-        onPointerMove={onMapPointerMove}
-        onPointerUp={endPan}
-        onPointerCancel={endPan}
-        onWheel={onMapWheel}
-      >
-        {/* Map canvas — drag to pan, wheel/slider to zoom */}
-        <div
-          className={`absolute inset-0 origin-center will-change-transform ${
-            isPanning ? '' : 'transition-transform duration-300 ease-out'
-          }`}
-          style={{ transform }}
+      {/* Map area */}
+      <div className={`relative mx-2 mb-2 min-h-0 flex-1 overflow-hidden rounded-lg border border-[#2A3036]/60 ${
+        mapTool === 'measure' ? 'cursor-crosshair' : ''
+      }`}>
+        <MapContainer
+          center={MINE_CENTER}
+          zoom={DEFAULT_ZOOM}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
+          zoomControl={false}
+          attributionControl={true}
+          style={{ width: '100%', height: '100%', background: '#0d1116' }}
         >
-          <img
-            src="/map/pit-base.png"
-            alt="Pit North topographic map"
-            className="absolute inset-0 h-full w-full object-cover"
-            draggable={false}
+          {/* Tile Layer */}
+          <TileLayer
+            key={currentTile.id}
+            url={currentTile.url}
+            attribution={currentTile.attribution}
+            maxZoom={currentTile.maxZoom}
           />
 
-          <svg
-            className="absolute inset-0 h-full w-full"
-            viewBox="0 0 100 100"
-            preserveAspectRatio="xMidYMid slice"
-          >
-            <defs>
-              <radialGradient id="mapVignette" cx="50%" cy="48%" r="62%">
-                <stop offset="55%" stopColor="#000" stopOpacity="0" />
-                <stop offset="100%" stopColor="#0D1116" stopOpacity="0.45" />
-              </radialGradient>
-              <pattern id="benchHatch" width="4" height="4" patternUnits="userSpaceOnUse">
-                <path d="M0 4 L4 0" stroke="#4A5258" strokeWidth="0.25" opacity="0.5" />
-              </pattern>
-            </defs>
-            <rect width="100" height="100" fill="url(#mapVignette)" />
+          {/* Map Controller (zoom sync, focus, follow, measure clicks) */}
+          <MapController
+            focus={focus}
+            followMode={followMode}
+            setFollowMode={setFollowMode}
+            selectedId={selectedId}
+            vehicles={mergedVehicles}
+            zoom={zoom}
+            setZoom={setZoom}
+            mapTool={mapTool}
+            measurePts={measurePts}
+            setMeasurePts={setMeasurePts}
+            pushToast={pushToast}
+          />
 
-            {layers.contourLines && (
-              <g opacity="0.35" fill="none" stroke="#5A636C" strokeWidth="0.25">
-                <ellipse cx="48" cy="48" rx="28" ry="20" />
-                <ellipse cx="48" cy="48" rx="20" ry="14" />
-                <ellipse cx="48" cy="48" rx="12" ry="8" />
-              </g>
-            )}
-
-            {layers.benchLevels && (
-              <ellipse cx="48" cy="48" rx="22" ry="16" fill="url(#benchHatch)" opacity="0.4" />
-            )}
-
-            {layers.geofence && (
-              <polygon
-                points="30,28 70,26 78,55 52,72 28,58"
-                fill="none"
-                stroke="#1ADBDE"
-                strokeWidth="0.45"
-                strokeDasharray="1.2 0.8"
-                opacity="0.85"
+          {/* Contour lines */}
+          {layers.contourLines &&
+            CONTOUR_RINGS.map((ring, i) => (
+              <Circle
+                key={`contour-${i}`}
+                center={ring.center as L.LatLngExpression}
+                radius={ring.radiusM}
+                pathOptions={{
+                  color: '#5A636C',
+                  weight: 1,
+                  opacity: 0.35,
+                  fill: false,
+                }}
               />
-            )}
+            ))}
 
-            {layers.roads && layers.equipmentLabels && (
-              <>
-                <text x="18" y="48" fill="#9AA3AB" fontSize="2.4" fontFamily="Inter, system-ui, sans-serif">
-                  Haul Road
-                </text>
-                <text x="58" y="58" fill="#9AA3AB" fontSize="2.4" fontFamily="Inter, system-ui, sans-serif">
-                  Road
-                </text>
-                <text x="66" y="72" fill="#7A848C" fontSize="2" fontFamily="Inter, system-ui, sans-serif" opacity="0.8">
-                  North Interchange
-                </text>
-              </>
-            )}
+          {/* Bench levels hatch pattern */}
+          {layers.benchLevels && (
+            <Circle
+              center={CONTOUR_RINGS[1].center as L.LatLngExpression}
+              radius={CONTOUR_RINGS[1].radiusM}
+              pathOptions={{
+                color: '#4A5258',
+                weight: 0.5,
+                opacity: 0.4,
+                fillColor: '#4A5258',
+                fillOpacity: 0.08,
+                dashArray: '4 4',
+              }}
+            />
+          )}
 
-            {layers.haulRoads && (
-              <>
-                <path
-                  d="M18,55 C30,52 38,48 46,44 C58,38 70,40 82,36"
-                  fill="none"
-                  stroke="#F6A214"
-                  strokeWidth="0.55"
-                  strokeOpacity="0.55"
-                  strokeDasharray="1.4 0.7"
-                />
-                <circle cx="64" cy="40" r="1.1" fill="#F6A214" opacity="0.9" />
-                <circle cx="64" cy="40" r="2.2" fill="none" stroke="#F6A214" strokeWidth="0.25" opacity="0.5" />
-              </>
-            )}
+          {/* Geofence boundary */}
+          {layers.geofence && (
+            <Polygon
+              positions={GEOFENCE_COORDS}
+              pathOptions={{
+                color: '#1ADBDE',
+                weight: 2,
+                opacity: 0.85,
+                dashArray: '8 5',
+                fill: false,
+              }}
+            />
+          )}
 
-            {layers.pitZones && (
-              <>
-                <MapPin x={36} y={38} letter="B" />
-                <MapPin x={34} y={62} letter="C" />
-                <MapPin x={58} y={40} letter="E" />
-              </>
-            )}
+          {/* Pit Zones */}
+          {layers.pitZones &&
+            PIT_ZONES.map((zone) => (
+              <Polygon
+                key={zone.id}
+                positions={zone.coords}
+                pathOptions={{
+                  color: zone.color,
+                  weight: 2,
+                  opacity: 0.8,
+                  fillColor: zone.color,
+                  fillOpacity: zone.fillOpacity,
+                }}
+              />
+            ))}
 
-            {/* Static fleet glyphs (decorative, controlled by fleet visibility) */}
-            {fleetVis.trucks && (
-              <g opacity="0.95">
-                <TruckGlyph x={72} y={34} />
-                <TruckGlyph x={74} y={42} />
-                <TruckGlyph x={73} y={50} />
-              </g>
-            )}
-            {fleetVis.excavators && <ExcavatorGlyph x={48} y={58} />}
+          {/* Pit Zone pins */}
+          {layers.pitZones &&
+            PIT_PINS.map((pin) => (
+              <Marker
+                key={`pin-${pin.letter}`}
+                position={pin.position as L.LatLngExpression}
+                icon={createPinIcon(pin.letter)}
+              />
+            ))}
 
-            {/* Measure line preview */}
-            {measurePts.length > 0 && (
-              <g>
-                {measurePts.map((p, i) => (
-                  <circle key={i} cx={p.x} cy={p.y} r="0.9" fill="#1ADBDE" />
-                ))}
-                {measurePts.length === 2 && (
-                  <line
-                    x1={measurePts[0].x}
-                    y1={measurePts[0].y}
-                    x2={measurePts[1].x}
-                    y2={measurePts[1].y}
-                    stroke="#1ADBDE"
-                    strokeWidth="0.4"
-                    strokeDasharray="1 0.6"
-                  />
-                )}
-              </g>
-            )}
-          </svg>
+          {/* Haul Roads */}
+          {layers.haulRoads &&
+            HAUL_ROADS.map((road) => (
+              <Polyline
+                key={road.id}
+                positions={road.coords}
+                pathOptions={{
+                  color: road.color,
+                  weight: 2.5,
+                  opacity: 0.55,
+                  dashArray: road.dashArray,
+                }}
+              />
+            ))}
 
-          {/* Clickable vehicle markers */}
-          {vehicles.filter(showMarker).map((v) => {
+          {/* Points of Interest */}
+          {layers.equipmentLabels &&
+            POINTS_OF_INTEREST.map((poi) => (
+              <Marker
+                key={poi.id}
+                position={poi.position as L.LatLngExpression}
+                icon={createPoiIcon(poi.label, poi.type)}
+              />
+            ))}
+
+          {/* Motion Trail Polylines (Jalur Pergerakan) */}
+          {mergedVehicles.filter(showMarker).map((v) => {
+            if (!v.trail || v.trail.length < 2) return null;
+
+            // Filter & split trail into valid continuous segments (< 0.05 deg jump)
+            const cleanSegments: L.LatLngTuple[][] = [];
+            let currentSegment: L.LatLngTuple[] = [];
+
+            for (let i = 0; i < v.trail.length; i++) {
+              const pt = v.trail[i];
+              if (!pt || !Number.isFinite(pt.lat) || !Number.isFinite(pt.lng)) continue;
+
+              if (currentSegment.length === 0) {
+                currentSegment.push([pt.lat, pt.lng]);
+              } else {
+                const prev = currentSegment[currentSegment.length - 1];
+                const distLat = Math.abs(prev[0] - pt.lat);
+                const distLng = Math.abs(prev[1] - pt.lng);
+
+                if (distLat < 0.05 && distLng < 0.05) {
+                  currentSegment.push([pt.lat, pt.lng]);
+                } else {
+                  if (currentSegment.length >= 2) {
+                    cleanSegments.push(currentSegment);
+                  }
+                  currentSegment = [[pt.lat, pt.lng]];
+                }
+              }
+            }
+            if (currentSegment.length >= 2) {
+              cleanSegments.push(currentSegment);
+            }
+
+            const trailColor = v.type === 'gps' ? '#1ADBDE' : v.type === 'excavator' ? '#3AC7A3' : '#F6A214';
+
+            return cleanSegments.map((segment, segIdx) => (
+              <Polyline
+                key={`trail-${v.id}-${segIdx}`}
+                positions={segment}
+                pathOptions={{
+                  color: trailColor,
+                  weight: 2.5,
+                  opacity: 0.8,
+                  dashArray: '4 4',
+                }}
+              />
+            ));
+          })}
+
+          {/* Vehicle Markers */}
+          {mergedVehicles.filter(showMarker).map((v) => {
             const asset = resolveAssetForMarker(v);
             const hot = alertHighlight(asset);
             const active = selectedId === v.id || inspectUnit === v.label;
+            const pos: L.LatLngTuple =
+              v.lat !== undefined && v.lng !== undefined
+                ? [v.lat, v.lng]
+                : mapXYToLatLng(v.x, v.y);
+
             return (
-              <button
+              <Marker
                 key={v.id}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openUnit(v.label, v.x, v.y, v.id);
+                position={pos}
+                icon={createVehicleIcon(
+                  v.type,
+                  v.label,
+                  v.detail,
+                  layers.equipmentLabels,
+                  active,
+                  hot,
+                )}
+                eventHandlers={{
+                  click: () => openUnit(v.label, v.x, v.y, v.id),
                 }}
-                className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
-                  active ? 'z-20 scale-105' : ''
-                }`}
-                style={{ left: `${v.x}%`, top: `${v.y}%` }}
-                title={`${v.label} · click for details`}
-              >
-                <div
-                  className={`flex items-center gap-1.5 rounded-md border bg-[#0D1116]/92 px-1.5 py-1 shadow-lg backdrop-blur-sm ${
-                    hot
-                      ? 'border-[#D6403E] ring-1 ring-[#D6403E]/50'
-                      : active
-                        ? 'border-[#1ADBDE] ring-1 ring-[#1ADBDE]/40'
-                        : 'border-[#F6A214]/55'
-                  }`}
-                >
-                  {v.type === 'excavator' ? <ExcavatorIcon /> : <TruckIcon />}
-                  {layers.equipmentLabels && (
-                    <div className="text-left leading-tight">
-                      <div className="text-[10px] font-semibold text-[#E8ECEF]">{v.label}</div>
-                      <div className="text-[9px] text-[#8A949C]">{v.detail}</div>
-                    </div>
-                  )}
-                  {hot && <AlertTriangle className="h-3 w-3 text-[#D6403E]" />}
-                </div>
-              </button>
+              />
             );
           })}
-        </div>
 
-        {/* Left legends — keep operational awareness, not crowding center */}
+          {/* Measure line */}
+          {measurePts.length > 0 && (
+            <>
+              {measurePts.length === 2 && (
+                <Polyline
+                  positions={measurePts.map((p) => [p.lat, p.lng] as L.LatLngTuple)}
+                  pathOptions={{
+                    color: '#1ADBDE',
+                    weight: 2,
+                    dashArray: '6 4',
+                  }}
+                />
+              )}
+              {measurePts.map((p, i) => (
+                <Circle
+                  key={`mpt-${i}`}
+                  center={[p.lat, p.lng]}
+                  radius={10}
+                  pathOptions={{
+                    color: '#1ADBDE',
+                    fillColor: '#1ADBDE',
+                    fillOpacity: 1,
+                    weight: 0,
+                  }}
+                />
+              ))}
+            </>
+          )}
+        </MapContainer>
+
+        {/* ─── Overlay UI Chrome (unchanged from original) ─── */}
+
+        {/* Left legends */}
         {layers.pitZones && (
-          <div className="pointer-events-auto absolute left-2 top-2 z-20 w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
+          <div className="pointer-events-auto absolute left-2 top-2 z-[1000] w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
             <div className="border-b border-[#2A3036] px-2.5 py-1.5 text-[10px] font-semibold tracking-wide text-[#E8ECEF]">
               PIT NORTH OPERATIONS
             </div>
@@ -558,7 +965,7 @@ export default function LiveMap({
         )}
 
         {layers.pitZones && (
-          <div className="absolute bottom-2 left-2 z-20 w-[132px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 px-2.5 py-1.5 shadow-xl backdrop-blur-sm">
+          <div className="absolute bottom-2 left-2 z-[1000] w-[132px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 px-2.5 py-1.5 shadow-xl backdrop-blur-sm">
             <div className="mb-1 text-[9px] font-semibold tracking-[0.12em] text-[#7A848C]">
               PIT ZONES
             </div>
@@ -573,9 +980,9 @@ export default function LiveMap({
           </div>
         )}
 
-        {/* Fleet lists — left of toolbar */}
+        {/* Fleet lists — right of map, left of toolbar */}
         {fleetVis.trucks && (
-          <div className="absolute right-12 top-2 z-20 w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
+          <div className="absolute right-12 top-2 z-[1000] w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
             <div className="border-b border-[#2A3036] px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.12em] text-[#C8D0D6]">
               HAUL TRUCKS
             </div>
@@ -584,10 +991,7 @@ export default function LiveMap({
                 <li key={t.id}>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openUnit(t.id, t.mapX, t.mapY, t.id);
-                    }}
+                    onClick={() => openUnit(t.id, t.mapX, t.mapY, t.id)}
                     className="flex w-full items-center gap-1.5 border-b border-[#1E242A] px-2 py-1.5 text-left last:border-0 hover:bg-[#1A2026]"
                   >
                     <TruckIcon />
@@ -604,7 +1008,7 @@ export default function LiveMap({
         )}
 
         {fleetVis.excavators && (
-          <div className="absolute right-12 top-[148px] z-20 w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
+          <div className="absolute right-12 top-[148px] z-[1000] w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
             <div className="border-b border-[#2A3036] px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.12em] text-[#C8D0D6]">
               EXCAVATORS
             </div>
@@ -613,10 +1017,7 @@ export default function LiveMap({
                 <li key={ex.id}>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openUnit(ex.id, ex.mapX, ex.mapY, ex.id);
-                    }}
+                    onClick={() => openUnit(ex.id, ex.mapX, ex.mapY, ex.id)}
                     className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-[#1A2026]"
                   >
                     <ExcavatorIcon />
@@ -632,15 +1033,23 @@ export default function LiveMap({
           </div>
         )}
 
-        {/* Floating equipment info panel — bottom-center-left, avoids toolbar */}
+        {/* Floating equipment info panel */}
         {selectedAsset && inspectUnit && (
           <EquipmentInfoPanel
             asset={selectedAsset}
             onClose={() => {
               setInspectUnit(null);
+              setFollowMode(false);
+              onSelect(null);
             }}
             onTrack={() => {
-              onFocusUnit(selectedAsset.mapX, selectedAsset.mapY, selectedAsset.unit);
+              onFocusUnit(
+                selectedAsset.mapX ?? 50,
+                selectedAsset.mapY ?? 50,
+                selectedAsset.unit,
+                selectedAsset.lat,
+                selectedAsset.lng
+              );
               setFollowMode(true);
               pushToast({
                 tone: 'success',
@@ -649,15 +1058,13 @@ export default function LiveMap({
               });
             }}
             onDetails={() => openAssetDetail(selectedAsset.id)}
+            onResetTrail={() => resetSingleDeviceTrail(selectedAsset.id || selectedAsset.unit)}
           />
         )}
 
         {/* Right-edge enterprise GIS toolbar */}
         <div
-          data-map-ui="true"
-          className="absolute right-1.5 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-0.5 rounded-lg border border-[#2A3036] bg-[#0D1116]/95 p-1 shadow-2xl backdrop-blur-md"
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute right-1.5 top-1/2 z-[1000] flex -translate-y-1/2 flex-col gap-0.5 rounded-lg border border-[#2A3036] bg-[#0D1116]/95 p-1 shadow-2xl backdrop-blur-md"
         >
           <ToolBtn
             label="Map Layers"
@@ -710,35 +1117,34 @@ export default function LiveMap({
             <DraftingCompass className="h-3.5 w-3.5" strokeWidth={1.75} />
           </ToolBtn>
           <Divider />
-          {/* Single vertical zoom slider — slide up = zoom in, down = zoom out */}
+          {/* Zoom slider */}
           <div
             className="flex flex-col items-center gap-1 py-1"
-            title={`Zoom ${Math.round(zoom * 100)}% · slide up/down`}
+            title={`Zoom ${zoom} · slide up/down`}
           >
             <span className="text-[8px] font-semibold tracking-wide text-[#5A636C]">+</span>
             <input
+              id="map-zoom-range-slider"
+              name="mapZoom"
               type="range"
-              min={85}
-              max={240}
-              step={5}
-              value={Math.round(zoom * 100)}
-              aria-label="Map zoom"
-              onChange={(e) => setZoom(clampZoom(Number(e.target.value) / 100))}
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={1}
+              value={zoom}
+              aria-label="Map zoom level"
+              onChange={(e) => setZoom(clampZoom(Number(e.target.value)))}
               className="map-zoom-slider h-[88px] w-3 cursor-pointer appearance-none bg-transparent"
               style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
             />
             <span className="text-[8px] font-semibold tracking-wide text-[#5A636C]">−</span>
-            <span className="text-[8px] tabular-nums text-[#6A737C]">{Math.round(zoom * 100)}%</span>
+            <span className="text-[8px] tabular-nums text-[#6A737C]">z{zoom}</span>
           </div>
         </div>
 
-        {/* Toolbar flyout panels — dock left of toolbar */}
+        {/* Toolbar flyout panels */}
         {openPanel && (
           <div
-            data-map-ui="true"
-            className="absolute right-11 top-1/2 z-30 w-[210px] -translate-y-1/2 overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md"
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute right-11 top-1/2 z-[1000] w-[210px] -translate-y-1/2 overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md"
           >
             {openPanel === 'layers' && (
               <Flyout title="Map Layers" onClose={() => setOpenPanel(null)}>
@@ -784,6 +1190,31 @@ export default function LiveMap({
                   checked={layers.contourLines}
                   onChange={(v) => setLayers((s) => ({ ...s, contourLines: v }))}
                 />
+                <Divider />
+                <div className="px-2.5 py-1.5">
+                  <div className="mb-1 text-[9px] font-semibold tracking-[0.12em] text-[#7A848C]">
+                    TILE LAYER
+                  </div>
+                  <div className="space-y-1">
+                    {TILE_LAYERS.map((tl) => (
+                      <button
+                        key={tl.id}
+                        type="button"
+                        onClick={() => setActiveTile(tl.id)}
+                        className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[11px] transition-colors ${
+                          activeTile === tl.id
+                            ? 'bg-[#1A2A2C] text-[#1ADBDE]'
+                            : 'text-[#C8D0D6] hover:bg-[#1A2026]'
+                        }`}
+                      >
+                        {tl.id === 'satellite' && <Satellite className="h-3 w-3" />}
+                        {tl.id === 'topo' && <MapIcon className="h-3 w-3" />}
+                        {tl.id === 'dark' && <Globe className="h-3 w-3" />}
+                        {tl.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </Flyout>
             )}
 
@@ -954,8 +1385,8 @@ export default function LiveMap({
         )}
 
         {/* Future integration strip */}
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 hidden -translate-x-1/2 rounded border border-[#2A3036]/80 bg-[#0D1116]/75 px-2 py-0.5 text-[8px] tracking-wider text-[#4A545C] sm:block">
-          REALTIME · GPS · WS · REPLAY · GEOFENCE · AI DISPATCH · READY
+        <div className="pointer-events-none absolute bottom-2 left-1/2 z-[1000] hidden -translate-x-1/2 rounded border border-[#2A3036]/80 bg-[#0D1116]/75 px-2 py-0.5 text-[8px] tracking-wider text-[#4A545C] sm:block">
+          LEAFLET · SATELLITE · GPS · WS · REPLAY · GEOFENCE · AI DISPATCH · LIVE
         </div>
       </div>
     </div>
@@ -974,11 +1405,35 @@ export default function LiveMap({
         <div className="fixed inset-x-0 bottom-0 top-[56px] z-[60] bg-[#0D1116] p-0">
           {mapBody}
         </div>
+        {onAddVehicle && onToggleMobileGps && (
+          <AddDeviceModal
+            isOpen={addDeviceModalOpen}
+            onClose={() => setAddDeviceModalOpen(false)}
+            onAddVehicle={onAddVehicle}
+            mobileGpsActive={mobileGpsActive}
+            mobileGpsError={mobileGpsError}
+            onToggleMobileGps={onToggleMobileGps}
+          />
+        )}
       </>
     );
   }
 
-  return mapBody;
+  return (
+    <>
+      {mapBody}
+      {onAddVehicle && onToggleMobileGps && (
+        <AddDeviceModal
+          isOpen={addDeviceModalOpen}
+          onClose={() => setAddDeviceModalOpen(false)}
+          onAddVehicle={onAddVehicle}
+          mobileGpsActive={mobileGpsActive}
+          mobileGpsError={mobileGpsError}
+          onToggleMobileGps={onToggleMobileGps}
+        />
+      )}
+    </>
+  );
 }
 
 /* ─── Subcomponents ─────────────────────────────────────────────── */
@@ -988,15 +1443,17 @@ function EquipmentInfoPanel({
   onClose,
   onTrack,
   onDetails,
+  onResetTrail,
 }: {
   asset: FleetAsset;
   onClose: () => void;
   onTrack: () => void;
   onDetails: () => void;
+  onResetTrail?: () => void;
 }) {
   return (
     <div
-      className="absolute bottom-2 left-[148px] z-30 w-[260px] max-w-[calc(100%-11rem)] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md sm:left-36"
+      className="absolute bottom-2 left-[148px] z-[1000] w-[270px] max-w-[calc(100%-11rem)] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md sm:left-36"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-start justify-between border-b border-[#2A3036] px-3 py-2">
@@ -1029,21 +1486,32 @@ function EquipmentInfoPanel({
           <Info label="Destination" value={asset.destination} span />
         </dl>
       </div>
-      <div className="flex gap-1.5 border-t border-[#2A3036] bg-[#12171C] px-2.5 py-2">
-        <button
-          type="button"
-          onClick={onTrack}
-          className="flex-1 rounded-md bg-[#1ADBDE] px-2 py-1 text-[10px] font-semibold text-[#0D1116] hover:bg-[#4AE5E8]"
-        >
-          Track
-        </button>
-        <button
-          type="button"
-          onClick={onDetails}
-          className="flex-1 rounded-md border border-[#2A3036] px-2 py-1 text-[10px] font-semibold text-[#C8D0D6] hover:border-[#1ADBDE]/50"
-        >
-          Full dossier
-        </button>
+      <div className="flex flex-col gap-1.5 border-t border-[#2A3036] bg-[#12171C] px-2.5 py-2">
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={onTrack}
+            className="flex-1 rounded-md bg-[#1ADBDE] px-2 py-1.5 text-[10px] font-bold text-[#0D1116] hover:bg-[#4AE5E8] transition-colors"
+          >
+            🎯 Opsi Tracking
+          </button>
+          <button
+            type="button"
+            onClick={onDetails}
+            className="flex-1 rounded-md border border-[#2A3036] bg-[#1A2026] px-2 py-1.5 text-[10px] font-semibold text-[#C8D0D6] hover:border-[#1ADBDE]/50 hover:text-[#1ADBDE] transition-colors"
+          >
+            📄 Detail Lanjut
+          </button>
+        </div>
+        {onResetTrail && (
+          <button
+            type="button"
+            onClick={onResetTrail}
+            className="w-full rounded-md border border-[#D6403E]/40 bg-[#D6403E]/10 px-2 py-1 text-[10px] font-semibold text-[#D6403E] hover:bg-[#D6403E] hover:text-white transition-colors"
+          >
+            🔄 Reset Riwayat Jejak Perjalanan
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1169,47 +1637,6 @@ function ToolBtn({
 
 function Divider() {
   return <div className="mx-1 my-0.5 h-px bg-[#2A3036]" />;
-}
-
-function MapPin({ x, y, letter }: { x: number; y: number; letter: string }) {
-  return (
-    <g>
-      <circle cx={x} cy={y} r={2.8} fill="#0D1116" stroke="#E8ECEF" strokeWidth={0.4} />
-      <text
-        x={x}
-        y={y + 1.05}
-        textAnchor="middle"
-        fill="#E8ECEF"
-        fontSize="2.8"
-        fontWeight="700"
-        fontFamily="Inter, system-ui, sans-serif"
-      >
-        {letter}
-      </text>
-    </g>
-  );
-}
-
-function TruckGlyph({ x, y }: { x: number; y: number }) {
-  return (
-    <g transform={`translate(${x - 1.5}, ${y - 1})`} fill="#F6A214">
-      <rect x="0" y="0.4" width="2.2" height="1.3" rx="0.2" />
-      <rect x="2.1" y="0.7" width="1.1" height="1" rx="0.15" />
-      <circle cx="0.7" cy="1.9" r="0.35" />
-      <circle cx="2.5" cy="1.9" r="0.35" />
-    </g>
-  );
-}
-
-function ExcavatorGlyph({ x, y }: { x: number; y: number }) {
-  return (
-    <g transform={`translate(${x - 1.5}, ${y - 1.2})`} fill="#F6A214">
-      <rect x="0.2" y="1" width="2.4" height="1.1" rx="0.2" />
-      <path d="M2.4 1.2 L4.2 0.2 L4.4 0.5 L2.7 1.5 Z" />
-      <circle cx="0.8" cy="2.3" r="0.35" />
-      <circle cx="2.2" cy="2.3" r="0.35" />
-    </g>
-  );
 }
 
 function TruckIcon() {

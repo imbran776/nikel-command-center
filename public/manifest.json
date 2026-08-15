@@ -1,0 +1,15 @@
+{
+  "short_name": "Mining GPS",
+  "name": "Mining Command Mobile GPS Beacon",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": "/track",
+  "background_color": "#0D1116",
+  "theme_color": "#1ADBDE",
+  "display": "standalone"
+}

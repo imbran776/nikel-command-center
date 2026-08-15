@@ -1,4 +1,56 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* ── Leaflet dark-theme overrides ───────────────────────────── */
+.leaflet-container {
+  background: #0d1116 !important;
+  font-family: var(--font-sans);
+}
+
+/* Hide default zoom control — we use our own toolbar slider */
+.leaflet-control-zoom {
+  display: none !important;
+}
+
+/* Attribution — compact, dark */
+.leaflet-control-attribution {
+  background: rgba(13, 17, 22, 0.75) !important;
+  color: #5a636c !important;
+  font-size: 9px !important;
+  padding: 1px 5px !important;
+  backdrop-filter: blur(4px);
+}
+.leaflet-control-attribution a {
+  color: #7a848c !important;
+}
+
+/* Popup styling for dark theme */
+.leaflet-popup-content-wrapper {
+  background: #151a1f !important;
+  color: #e8ecef !important;
+  border: 1px solid #2a3036 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+.leaflet-popup-tip {
+  background: #151a1f !important;
+  border: 1px solid #2a3036 !important;
+}
+.leaflet-popup-close-button {
+  color: #7a848c !important;
+}
+.leaflet-popup-close-button:hover {
+  color: #e8ecef !important;
+}
+
+/* Vehicle & GPS marker divIcon container fixes */
+.leaflet-vehicle-marker {
+  background: transparent !important;
+  border: none !important;
+  white-space: nowrap !important;
+  pointer-events: auto;
+}
+
 
 @theme {
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;

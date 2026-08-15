@@ -1,12 +1,16 @@
+import { useMemo } from 'react';
 import DailyProduction from '../components/DailyProduction';
 import EquipmentTable from '../components/EquipmentTable';
 import GaugeCard from '../components/GaugeCard';
 import LiveMap from '../components/LiveMap';
+import { MapErrorBoundary } from '../components/MapErrorBoundary';
 import { useEquipmentStatus } from '../hooks/useEquipmentStatus';
 import { useLiveTelemetry } from '../hooks/useLiveTelemetry';
 import { useProductionData } from '../hooks/useProductionData';
 import { useVehiclePositions } from '../hooks/useVehiclePositions';
-import type { EquipmentRow } from '../types/fms';
+import { useOps } from '../contexts/OpsContext';
+import { latLngToMapXY } from '../lib/mapConfig';
+import type { EquipmentRow, VehicleMarker } from '../types/fms';
 
 /**
  * Original operations dashboard layout (restored):
@@ -15,9 +19,52 @@ import type { EquipmentRow } from '../types/fms';
  */
 export default function DashboardPage() {
   const { kpis } = useLiveTelemetry();
-  const { vehicles, selectedId, setSelectedId, focus, focusOn } = useVehiclePositions();
+  const {
+    vehicles,
+    selectedId,
+    setSelectedId,
+    focus,
+    focusOn,
+    addVehicle,
+    mobileGpsActive,
+    mobileGpsError,
+    toggleMobileGpsTrack,
+  } = useVehiclePositions();
   const { rows, sortKey, sortDir, toggleSort } = useEquipmentStatus();
   const { bars, total, target, xLabels } = useProductionData();
+  const { gpsDevices } = useOps();
+
+  // Merge GPS devices (from OpsContext / server polling) into the vehicles array
+  // so they appear as markers on the LiveMap alongside regular mining vehicles
+  const allVehicles = useMemo<VehicleMarker[]>(() => {
+    const gpsMarkers: VehicleMarker[] = gpsDevices
+      .filter((d) => d.lat && d.lng && d.status === 'online')
+      .map((d) => {
+        const { x, y } = latLngToMapXY(d.lat, d.lng);
+        const accM = d.accuracyM ?? 0;
+        const accStr = accM >= 1000 ? `±${(accM / 1000).toFixed(1)}km` : accM > 0 ? `±${Math.round(accM)}m` : 'Live';
+
+        return {
+          id: `GPS-${d.id}`,
+          type: 'gps' as const,
+          label: d.assetUnit || d.name || 'MOBILE-GPS',
+          detail: `📱 ${accStr} · Live`,
+          x,
+          y,
+          lat: d.lat,
+          lng: d.lng,
+          heading: 0,
+          trail: d.trail?.map((t) => ({ lat: t.lat, lng: t.lng })),
+        };
+      });
+
+    // Deduplicate: if a GPS marker already exists in vehicles (from BroadcastChannel),
+    // prefer the one from vehicles (which has more frequent updates)
+    const vehicleIds = new Set(vehicles.map((v) => v.id));
+    const uniqueGps = gpsMarkers.filter((g) => !vehicleIds.has(g.id));
+
+    return [...vehicles, ...uniqueGps];
+  }, [vehicles, gpsDevices]);
 
   const locateEquipment = (row: EquipmentRow) => {
     const seed = row.unit.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -31,13 +78,19 @@ export default function DashboardPage() {
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_340px] gap-2.5 overflow-hidden">
       {/* Left column: map + equipment table */}
       <section className="flex min-h-0 min-w-0 flex-col gap-2.5 overflow-hidden">
-        <LiveMap
-          vehicles={vehicles}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onFocusUnit={focusOn}
-          focus={focus}
-        />
+        <MapErrorBoundary>
+          <LiveMap
+            vehicles={vehicles}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onFocusUnit={focusOn}
+            focus={focus}
+            onAddVehicle={addVehicle}
+            mobileGpsActive={mobileGpsActive}
+            mobileGpsError={mobileGpsError}
+            onToggleMobileGps={toggleMobileGpsTrack}
+          />
+        </MapErrorBoundary>
         <div className="flex min-h-0 flex-[0.85] flex-col overflow-hidden">
           <EquipmentTable
             rows={rows}
@@ -71,3 +124,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

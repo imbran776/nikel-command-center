@@ -167,10 +167,13 @@ export default function ModalsHost() {
           ).map(([key, label]) => (
             <label
               key={key}
+              htmlFor={`layer-toggle-${key}`}
               className="flex cursor-pointer items-center justify-between rounded-md px-2 py-2 hover:bg-[#1A2026]"
             >
               <span className="text-[12px] text-[#C8D0D6]">{label}</span>
               <input
+                id={`layer-toggle-${key}`}
+                name={`layer_${key}`}
                 type="checkbox"
                 checked={mapLayers[key]}
                 onChange={(e) => setMapLayer(key, e.target.checked)}
@@ -354,17 +357,17 @@ function AssignModal({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Truck" value={truck} onChange={setTruck} options={['HT-04', 'HT-06', 'HT-09', 'HT-11', 'HT-14']} />
-        <Field label="Excavator" value={excavator} onChange={setExcavator} options={['EX-01', 'EX-03', '—']} />
-        <Field label="Loading point" value={load} onChange={setLoad} options={['Face B', 'Face C', 'Stockpile West', 'Fill Station']} />
-        <Field label="Dump point" value={dump} onChange={setDump} options={['Crusher Pad', 'Dump East', 'Haul Road N']} />
-        <Field label="Priority" value={priority} onChange={setPriority} options={['Low', 'Normal', 'High', 'Critical']} />
+        <SelectField label="Truck" value={truck} onChange={setTruck} options={['HT-04', 'HT-06', 'HT-09', 'HT-11', 'HT-14']} />
+        <SelectField label="Excavator" value={excavator} onChange={setExcavator} options={['EX-01', 'EX-03', '—']} />
+        <SelectField label="Loading point" value={load} onChange={setLoad} options={['Face B', 'Face C', 'Stockpile West', 'Fill Station']} />
+        <SelectField label="Dump point" value={dump} onChange={setDump} options={['Crusher Pad', 'Dump East', 'Haul Road N']} />
+        <SelectField label="Priority" value={priority} onChange={setPriority} options={['Low', 'Normal', 'High', 'Critical']} />
       </div>
     </ModalShell>
   );
 }
 
-function Field({
+function SelectField({
   label,
   value,
   onChange,
@@ -375,10 +378,13 @@ function Field({
   onChange: (v: string) => void;
   options: string[];
 }) {
+  const fieldId = `modal-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
-    <label className="block">
+    <label htmlFor={fieldId} className="block">
       <span className="mb-1 block text-[10px] tracking-wider text-[#6A737C]">{label}</span>
       <select
+        id={fieldId}
+        name={label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-md border border-[#2A3036] bg-[#0D1116] px-2.5 py-1.5 text-[12px] text-[#E8ECEF] outline-none focus:border-[#1ADBDE]"
@@ -471,8 +477,11 @@ function RadioModal({
           ))}
         </div>
         <textarea
+          id="broadcast-message-textarea"
+          name="broadcastMessage"
           value={msg}
           onChange={(e) => setMsg(e.target.value)}
+          aria-label="Broadcast message"
           rows={3}
           className="w-full resize-none rounded-md border border-[#2A3036] bg-[#0D1116] px-2.5 py-2 text-[12px] text-[#E8ECEF] outline-none focus:border-[#1ADBDE]"
         />
@@ -530,8 +539,11 @@ function ServiceModal({
           ))}
         </div>
         <textarea
+          id="service-note-textarea"
+          name="serviceNote"
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          aria-label="Service work order note"
           rows={4}
           className="w-full resize-none rounded-md border border-[#2A3036] bg-[#0D1116] px-2.5 py-2 text-[12px] text-[#E8ECEF] outline-none focus:border-[#F6A214]"
         />
@@ -584,18 +596,23 @@ function FilterModal({
       }
     >
       <div className="space-y-3">
-        <label className="block">
+        <label htmlFor="filter-equipment-query" className="block">
           <span className="mb-1 block text-[10px] tracking-wider text-[#6A737C]">Search</span>
           <input
+            id="filter-equipment-query"
+            name="filterQuery"
+            type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Unit, type, or driver"
             className="w-full rounded-md border border-[#2A3036] bg-[#0D1116] px-2.5 py-1.5 text-[12px] text-[#E8ECEF] outline-none focus:border-[#1ADBDE]"
           />
         </label>
-        <label className="block">
+        <label htmlFor="filter-equipment-status" className="block">
           <span className="mb-1 block text-[10px] tracking-wider text-[#6A737C]">Status</span>
           <select
+            id="filter-equipment-status"
+            name="filterStatus"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
             className="w-full rounded-md border border-[#2A3036] bg-[#0D1116] px-2.5 py-1.5 text-[12px] text-[#E8ECEF] outline-none focus:border-[#1ADBDE]"
@@ -607,8 +624,10 @@ function FilterModal({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-2 text-[12px] text-[#C8D0D6]">
+        <label htmlFor="filter-equipment-flagged" className="flex items-center gap-2 text-[12px] text-[#C8D0D6]">
           <input
+            id="filter-equipment-flagged"
+            name="flaggedOnly"
             type="checkbox"
             checked={flaggedOnly}
             onChange={(e) => setFlaggedOnly(e.target.checked)}

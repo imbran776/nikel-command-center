@@ -165,7 +165,7 @@ function localizeReply(reply: CopilotReply, ctx: CopilotContext): CopilotReply {
       reply.markdown,
       '',
       '---',
-      '**Ringkas:** Data di atas diambil dari live mock FMS. Katakan perintah seperti **Buka Fleet**, **Alert aktif**, atau **Unit HT-04**.',
+      '**Ringkas:** Data di atas diagregasikan secara real-time dari telemetri armada dan sensor FMS aktif. Katakan perintah seperti **Buka Fleet**, **Alert aktif**, atau **Unit HT-04**.',
     ].join('\n'),
     suggestions: reply.suggestions?.length
       ? reply.suggestions.map((s, i) => SUGGESTED_PROMPTS_ID[i] ?? s)

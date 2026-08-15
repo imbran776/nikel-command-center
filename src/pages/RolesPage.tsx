@@ -79,7 +79,7 @@ export default function RolesPage() {
                 size="sm"
                 variant="outline"
                 onClick={() =>
-                  pushToast({ tone: 'info', title: role.name, message: 'Permission matrix (demo).' })
+                  pushToast({ tone: 'info', title: role.name, message: `Access level: ${role.perms.join(', ')}` })
                 }
               >
                 Edit

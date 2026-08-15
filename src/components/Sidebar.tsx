@@ -9,6 +9,7 @@ import {
   Instagram,
   LayoutDashboard,
   Mail,
+  MapPin,
   Radio,
   Settings,
   Shield,
@@ -41,6 +42,7 @@ const NAV: NavNode[] = [
     ],
   },
   { id: 'fleet', label: 'Fleet', icon: Truck },
+  { id: 'device-tracking', label: 'Device Tracking', icon: MapPin },
   { id: 'production', label: 'Production', icon: BarChart3 },
   {
     id: 'group-assets',
@@ -119,14 +121,6 @@ export default function Sidebar({ alertCount }: { alertCount: number }) {
         collapsed ? 'w-[64px]' : 'w-[220px]'
       }`}
     >
-      {!collapsed && user && (
-        <div className="mx-2.5 mt-2 rounded-lg border border-[#2A3036] bg-[#12171C] px-2.5 py-2">
-          <div className="text-[11px] font-semibold text-[#E8ECEF]">{user.name}</div>
-          <div className="text-[9px] text-[#6A737C]">
-            {user.roleLabel} · {user.site}
-          </div>
-        </div>
-      )}
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pt-2 pb-2" aria-label="Primary">
         {visibleNav.map((item) => {
           const Icon = item.icon;
@@ -269,51 +263,6 @@ export default function Sidebar({ alertCount }: { alertCount: number }) {
             />
           </button>
         </div>
-
-        {/* Developer credit — sits below Settings row at the very bottom of the rail */}
-        {!collapsed ? (
-          <div className="border-t border-[#1A1F24] px-3 py-2.5">
-            <div className="text-[8px] font-semibold uppercase tracking-[0.14em] text-[#4A545C]">
-              Developed by
-            </div>
-            <div className="mt-0.5 text-[11px] font-semibold text-[#C8D0D6]">Imbran Darwis</div>
-            <a
-              href="https://instagram.com/ranzxyz77"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[#8A949C] transition-colors hover:text-[#1ADBDE]"
-            >
-              <Instagram className="h-3 w-3 shrink-0" />
-              <span>@ranzxyz77</span>
-            </a>
-            <a
-              href="mailto:imbrandarwis8@gmail.com"
-              className="mt-1 flex items-center gap-1.5 text-[10px] text-[#8A949C] transition-colors hover:text-[#F6A214]"
-            >
-              <Mail className="h-3 w-3 shrink-0" />
-              <span className="truncate">imbrandarwis8@gmail.com</span>
-            </a>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-1 border-t border-[#1A1F24] px-1 py-2">
-            <a
-              href="https://instagram.com/ranzxyz77"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Instagram @ranzxyz77"
-              className="rounded p-1 text-[#6A737C] hover:bg-[#161B20] hover:text-[#1ADBDE]"
-            >
-              <Instagram className="h-3.5 w-3.5" />
-            </a>
-            <a
-              href="mailto:imbrandarwis8@gmail.com"
-              title="imbrandarwis8@gmail.com"
-              className="rounded p-1 text-[#6A737C] hover:bg-[#161B20] hover:text-[#F6A214]"
-            >
-              <Mail className="h-3.5 w-3.5" />
-            </a>
-          </div>
-        )}
       </div>
     </aside>
   );

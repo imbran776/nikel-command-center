@@ -10,9 +10,7 @@ export function buildCsv(headers: string[], rows: (string | number)[][]): string
 }
 
 /**
- * Attempt a browser file download.
- * In sandboxed iframes / Design Arena preview this often does NOT land in the
- * host laptop Downloads folder — callers should also surface content in a modal.
+ * Attempt a standard browser file download.
  */
 export function triggerBrowserDownload(
   filename: string,
@@ -83,4 +81,14 @@ export function stampFilename(prefix: string, ext: string) {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${prefix}_${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}_${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}Z.${ext}`;
+}
+
+/** Generate a short invite code for device onboarding (e.g., INV-ABC123) */
+export function generateInviteCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing chars
+  let code = 'INV-';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
 }

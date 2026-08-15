@@ -3,6 +3,7 @@ export type NavItemId =
   | 'live-ops'
   | 'dispatch'
   | 'fleet'
+  | 'device-tracking'
   | 'production'
   | 'equipment'
   | 'equipment-detail'
@@ -36,10 +37,11 @@ export type AssetType =
   | 'Dozer'
   | 'Drill Rig'
   | 'Water Truck'
-  | 'Grader';
+  | 'Grader'
+  | 'Mobile GPS Transmitter';
 
-export type EngineState = 'Running' | 'Idle' | 'Off' | 'Fault';
-export type Connectivity = 'Online' | 'Degraded' | 'Offline';
+export type EngineState = 'Running' | 'Idle' | 'Off' | 'Fault' | 'Online';
+export type Connectivity = 'Online' | 'Degraded' | 'Offline' | 'Cellular';
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type MaintType = 'Preventive' | 'Corrective';
 export type WorkOrderStatus = 'Open' | 'In Progress' | 'Parts Hold' | 'Completed' | 'Cancelled';
@@ -83,6 +85,10 @@ export interface FleetAsset {
   utilization: number;
   mapX: number;
   mapY: number;
+  /** Real-world latitude (optional — converted from mapX/mapY if missing) */
+  lat?: number;
+  /** Real-world longitude (optional — converted from mapX/mapY if missing) */
+  lng?: number;
 }
 
 export interface Operator {
@@ -213,12 +219,18 @@ export interface TelemetryKpi {
 
 export interface VehicleMarker {
   id: string;
-  type: 'haul' | 'excavator';
+  type: 'haul' | 'excavator' | 'gps';
   label: string;
   detail: string;
   x: number;
   y: number;
   heading?: number;
+  /** Real-world latitude (optional — converted from x/y if missing) */
+  lat?: number;
+  /** Real-world longitude (optional — converted from x/y if missing) */
+  lng?: number;
+  /** Historical Lat/Lng motion trail breadcrumbs */
+  trail?: { lat: number; lng: number }[];
 }
 
 /** Dual-tone hourly bar: cyan (ore) + amber (waste/secondary) stacked per hour */
@@ -248,3 +260,33 @@ export interface LegendItem {
   label: string;
   color: string;
 }
+
+/** GPS Device (phone/beacon) linked to an operator/asset */
+export interface GpsDevice {
+  id: string;
+  name: string;           // e.g. "Andi's Phone"
+  type: 'phone' | 'beacon';
+  platform: 'ios' | 'android' | 'ble';
+  ownerId: string;        // operator id
+  ownerName: string;      // operator name
+  assetId?: string;       // linked fleet asset (optional)
+  assetUnit?: string;     // e.g. "HT-04"
+  status: 'online' | 'offline' | 'stale';
+  lastSeen: string;       // ISO timestamp
+  batteryPct?: number;
+  accuracyM?: number;
+  /** Current position */
+  lat: number;
+  lng: number;
+  /** 24h motion trail (reset daily at shift change) */
+  trail: { lat: number; lng: number; ts: string }[];
+  /** Invitation link for easy onboarding */
+  inviteCode?: string;
+  inviteExpiresAt?: string;
+  /** Registration timestamp for audit */
+  registeredAt?: string;
+  createdAt: string;
+}
+
+/** Device tracking page filters */
+export type DeviceStatusFilter = 'all' | 'online' | 'offline' | 'stale';

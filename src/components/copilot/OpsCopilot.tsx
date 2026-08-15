@@ -526,6 +526,8 @@ export default function OpsCopilot() {
           </div>
           <div className="flex items-end gap-1.5">
             <textarea
+              id="ops-copilot-input"
+              name="copilotQuery"
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -537,6 +539,7 @@ export default function OpsCopilot() {
               }}
               rows={2}
               placeholder={t('copilot.placeholder')}
+              aria-label={t('copilot.placeholder') || 'Copilot query prompt'}
               className="min-h-[40px] flex-1 resize-none rounded-md border border-[#2A3036] bg-[#0D1116] px-2 py-1.5 text-[12px] text-[#E8ECEF] outline-none placeholder:text-[#4A545C] focus:border-[#1ADBDE]/50"
             />
             <button

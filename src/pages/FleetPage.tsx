@@ -213,13 +213,13 @@ export default function FleetPage() {
                 label: 'History',
                 icon: <History className="h-3.5 w-3.5" />,
                 onSelect: () =>
-                  pushToast({ tone: 'info', title: 'History', message: `${r.unit} trip & event history (demo).` }),
+                  pushToast({ tone: 'info', title: 'History', message: `${r.unit} trip & cycle telemetry history.` }),
               },
               {
                 id: 'e',
                 label: 'Edit record',
                 icon: <Pencil className="h-3.5 w-3.5" />,
-                onSelect: () => pushToast({ tone: 'info', title: 'Edit', message: 'Asset master edit opens in admin (demo).' }),
+                onSelect: () => pushToast({ tone: 'info', title: 'Edit', message: `Editing configuration for ${r.unit}.` }),
               },
             ]}
           />

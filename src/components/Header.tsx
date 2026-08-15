@@ -3,7 +3,6 @@ import {
   Bell,
   Calendar,
   ChevronDown,
-  Code2,
   Command,
   LogOut,
   Plus,
@@ -18,7 +17,6 @@ import { useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOps } from '../contexts/OpsContext';
 import { useClock } from '../hooks/useClock';
-import { downloadProjectSourceZip } from '../lib/downloadSource';
 import Button from './ui/Button';
 import DropdownMenu from './ui/DropdownMenu';
 import ProfileEditorModal from './ui/ProfileEditorModal';
@@ -42,7 +40,6 @@ export default function Header() {
   const clock = useClock();
   const { user, logout, canAccess, updateCurrentUser } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
-  const [downloadingSrc, setDownloadingSrc] = useState(false);
   const {
     settings,
     alertCount,
@@ -151,10 +148,14 @@ export default function Header() {
       <div className="relative mx-1 hidden min-w-0 flex-1 max-w-md sm:block">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5A636C]" />
         <input
+          id="header-global-search"
+          name="globalSearch"
+          type="search"
           value={globalQuery}
           onChange={(e) => setGlobalQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runGlobalSearch()}
           placeholder="Search unit, operator, location…"
+          aria-label="Search unit, operator, location"
           className="h-8 w-full rounded-md border border-[#2A3036] bg-[#12171C] py-1.5 pl-8 pr-16 text-[12px] text-[#E8ECEF] outline-none placeholder:text-[#5A636C] focus:border-[#1ADBDE]/50"
         />
         <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded border border-[#2A3036] px-1.5 py-0.5 text-[9px] text-[#5A636C] sm:inline-flex">
@@ -324,33 +325,6 @@ export default function Header() {
                   });
               },
             },
-            {
-              id: 'download-source',
-              label: downloadingSrc ? 'Preparing source…' : 'Download source code',
-              icon: <Code2 className="h-3.5 w-3.5" />,
-              // DEV NOTE: Remove this menu item before production / client handoff.
-              // It ships the full project zip from /public for demo convenience only.
-              onSelect: () => {
-                setDownloadingSrc(true);
-                void downloadProjectSourceZip()
-                  .then(() => {
-                    pushToast({
-                      tone: 'success',
-                      title: 'Source package ready',
-                      message:
-                        'mining-command-fms-source.zip downloaded. (Dev: remove this button before production.)',
-                    });
-                  })
-                  .catch(() => {
-                    pushToast({
-                      tone: 'critical',
-                      title: 'Download failed',
-                      message: 'Could not fetch source package. Check /public zip asset.',
-                    });
-                  })
-                  .finally(() => setDownloadingSrc(false));
-              },
-            },
             ...(canAccess('settings')
               ? [
                   {
@@ -410,10 +384,13 @@ function SelectChip({
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
 }) {
+  const chipId = `select-chip-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
-    <label className="flex h-8 items-center gap-1.5 rounded-md border border-[#2A3036] bg-[#12171C] px-2">
+    <label htmlFor={chipId} className="flex h-8 items-center gap-1.5 rounded-md border border-[#2A3036] bg-[#12171C] px-2">
       <span className="text-[9px] font-semibold tracking-wider text-[#5A636C]">{label}</span>
       <select
+        id={chipId}
+        name={label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="max-w-[110px] bg-transparent text-[11px] font-medium text-[#C8D0D6] outline-none"
