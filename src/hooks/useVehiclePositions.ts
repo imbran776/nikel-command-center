@@ -101,14 +101,14 @@ export function useVehiclePositions() {
       channel = new BroadcastChannel('mining_gps_channel');
       channel.onmessage = (e) => {
         if (e.data && e.data.type === 'GPS_UPDATE') {
-          const { unitLabel, lat, lng, speedKph, heading } = e.data;
+          const { unitLabel, lat, lng, speedKph, heading, operationalStatus, sos } = e.data;
           const xy = latLngToMapXY(lat, lng);
 
           const gpsVehicle: VehicleMarker = {
             id: `GPS-${unitLabel}`,
-            type: 'gps',
+            type: 'haul',
             label: unitLabel || 'MOBILE-GPS',
-            detail: `📱 ${speedKph || 0} kph · Live`,
+            detail: `${sos ? '🚨 SOS · ' : ''}${operationalStatus || 'Hauling'} · ${speedKph || 0} kph`,
             x: xy.x,
             y: xy.y,
             lat,
@@ -127,14 +127,14 @@ export function useVehiclePositions() {
       if (e.key === 'mining_gps_live_data' && e.newValue) {
         try {
           const data = JSON.parse(e.newValue);
-          const { unitLabel, lat, lng, speedKph, heading } = data;
+          const { unitLabel, lat, lng, speedKph, heading, operationalStatus, sos } = data;
           const xy = latLngToMapXY(lat, lng);
 
           const gpsVehicle: VehicleMarker = {
             id: `GPS-${unitLabel}`,
-            type: 'gps',
+            type: 'haul',
             label: unitLabel || 'MOBILE-GPS',
-            detail: `📱 ${speedKph || 0} kph · Live`,
+            detail: `${sos ? '🚨 SOS · ' : ''}${operationalStatus || 'Hauling'} · ${speedKph || 0} kph`,
             x: xy.x,
             y: xy.y,
             lat,

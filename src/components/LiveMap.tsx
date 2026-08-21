@@ -19,12 +19,14 @@ import {
   Navigation,
   Pentagon,
   Plus,
+  Radio,
   Ruler,
   Satellite,
   Scan,
   Search,
   Smartphone,
   Truck,
+  Users,
   Wrench,
   X,
 } from 'lucide-react';
@@ -38,6 +40,7 @@ import {
   Polygon,
   Polyline,
   TileLayer,
+  Tooltip,
   useMap,
   useMapEvents,
 } from 'react-leaflet';
@@ -115,6 +118,21 @@ interface AlertLayer {
   maintenance: boolean;
 }
 
+interface OnlineOperatorItem {
+  id: string;
+  name: string;
+  unit: string;
+  type: string;
+  status: string;
+  speedKph: number;
+  lat: number;
+  lng: number;
+  x: number;
+  y: number;
+  source: 'gps' | 'fleet';
+  batteryPct?: number;
+}
+
 const DEFAULT_LAYERS: MapLayerState = {
   roads: true,
   pitZones: true,
@@ -143,10 +161,12 @@ const DEFAULT_ALERTS: AlertLayer = {
 function createVehicleIcon(
   type: 'haul' | 'excavator' | 'gps',
   label: string,
+  operatorName: string | undefined,
   detail: string,
   showLabels: boolean,
   isActive: boolean,
   isAlert: boolean,
+  isOnline: boolean,
 ): L.DivIcon {
   const color = isAlert
     ? '#D6403E'
@@ -156,25 +176,30 @@ function createVehicleIcon(
         ? '#1ADBDE'
         : '#F6A214';
 
-  const pingHtml = (isActive || isAlert)
-    ? `<div style="position:absolute;inset:-5px;border-radius:50%;border:1.5px solid ${color};animation:pulse 1.8s infinite;opacity:0.75;pointer-events:none"></div>`
+  const pingHtml = (isOnline || isActive || isAlert)
+    ? `<div style="position:absolute;inset:-6px;border-radius:50%;border:1.5px solid ${color};animation:pulse 1.8s infinite;opacity:0.8;pointer-events:none"></div>`
     : '';
+
+  const labelText = operatorName ? `${label} · ${operatorName}` : label;
 
   const labelHtml = showLabels
-    ? `<div style="position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:rgba(13,17,22,0.92);border:1px solid ${color}88;border-radius:4px;padding:2px 6px;font-size:9.5px;font-weight:700;color:#E8ECEF;white-space:nowrap;pointer-events:none;box-shadow:0 3px 8px rgba(0,0,0,0.6);backdrop-filter:blur(4px)">${label}</div>`
+    ? `<div style="position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:rgba(13,17,22,0.94);border:1px solid ${color}aa;border-radius:4px;padding:2px 6px;font-size:9.5px;font-weight:700;color:#E8ECEF;white-space:nowrap;pointer-events:none;box-shadow:0 3px 8px rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;gap:4px">
+        ${isOnline ? '<span style="width:6px;height:6px;border-radius:50%;background:#3AC7A3;display:inline-block;box-shadow:0 0 5px #3AC7A3"></span>' : ''}
+        <span>${labelText}</span>
+      </div>`
     : '';
 
-  const html = `<div style="position:relative;display:flex;align-items:center;justify-content:center;width:18px;height:18px;cursor:pointer">
+  const html = `<div style="position:relative;display:flex;align-items:center;justify-content:center;width:20px;height:20px;cursor:pointer">
     ${pingHtml}
-    <div style="width:10px;height:10px;border-radius:50%;background:${color};border:2px solid #0D1116;box-shadow:0 0 10px ${color}"></div>
+    <div style="width:11px;height:11px;border-radius:50%;background:${color};border:2px solid #0D1116;box-shadow:0 0 10px ${color}"></div>
     ${labelHtml}
   </div>`;
 
   return L.divIcon({
     html,
     className: 'leaflet-vehicle-marker-dot',
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
   });
 }
 
@@ -190,7 +215,7 @@ function createPinIcon(letter: string): L.DivIcon {
 function createPoiIcon(label: string, type: 'dump' | 'load' | 'facility'): L.DivIcon {
   const color = type === 'dump' ? '#D6403E' : type === 'load' ? '#3AC7A3' : '#7A848C';
   return L.divIcon({
-    html: `<div style="font-size:8px;font-weight:600;color:${color};background:rgba(13,17,22,0.85);border:1px solid ${color}44;border-radius:4px;padding:2px 5px;white-space:nowrap;letter-spacing:0.05em;backdrop-filter:blur(4px)">${label}</div>`,
+    html: `<div style="font-size:8.5px;font-weight:600;color:${color};background:rgba(13,17,22,0.88);border:1px solid ${color}44;border-radius:4px;padding:2px 5px;white-space:nowrap;letter-spacing:0.05em;backdrop-filter:blur(4px)">${label}</div>`,
     className: 'leaflet-poi-marker',
     iconSize: [0, 0],
     iconAnchor: [0, 0],
@@ -211,6 +236,8 @@ function MapController({
   measurePts,
   setMeasurePts,
   pushToast,
+  initialOperator,
+  onSelectUnit,
 }: {
   focus: { x: number; y: number; lat?: number; lng?: number } | null;
   followMode: boolean;
@@ -223,9 +250,31 @@ function MapController({
   measurePts: { lat: number; lng: number }[];
   setMeasurePts: React.Dispatch<React.SetStateAction<{ lat: number; lng: number }[]>>;
   pushToast: (t: { tone: 'info' | 'success' | 'warning' | 'critical'; title: string; message?: string }) => void;
+  initialOperator: OnlineOperatorItem | null;
+  onSelectUnit?: (id: string, unit: string) => void;
 }) {
   const map = useMap();
   const lastPosRef = useRef<L.LatLngTuple | null>(null);
+  const initialCenteredRef = useRef<boolean>(false);
+
+  // Automatically invalidate size on mount & resize to eliminate grey tile glitches
+  useEffect(() => {
+    const container = map.getContainer();
+    if (!container) return;
+    const ro = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    ro.observe(container);
+
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+
+    return () => {
+      ro.disconnect();
+      clearTimeout(timer);
+    };
+  }, [map]);
 
   // Sync external zoom changes to map (with float precision guard)
   useEffect(() => {
@@ -235,6 +284,26 @@ function MapController({
     }
   }, [zoom, map]);
 
+  // Initial Camera focus onto Online Operator
+  useEffect(() => {
+    if (!initialCenteredRef.current && initialOperator && Number.isFinite(initialOperator.lat) && Number.isFinite(initialOperator.lng)) {
+      initialCenteredRef.current = true;
+      const targetZoom = Math.max(map.getZoom(), 16);
+      map.flyTo([initialOperator.lat, initialOperator.lng], targetZoom, {
+        duration: 1.2,
+        easeLinearity: 0.25,
+      });
+      if (onSelectUnit) {
+        onSelectUnit(initialOperator.id, initialOperator.unit);
+      }
+      pushToast({
+        tone: 'success',
+        title: '🎯 Kamera Terpusat ke Operator Online',
+        message: `${initialOperator.name} · Unit ${initialOperator.unit}`,
+      });
+    }
+  }, [initialOperator, map, onSelectUnit, pushToast]);
+
   // Listen for map zoom & drag events
   useMapEvents({
     zoomend: () => {
@@ -242,7 +311,7 @@ function MapController({
       setZoom((prev) => (prev !== z ? z : prev));
     },
     dragstart: () => {
-      // Auto-pause follow mode if user manually drags/pans the map to prevent camera fighting/jitter
+      // Auto-pause follow mode if user manually drags/pans the map to prevent camera fighting
       if (followMode) {
         setFollowMode(false);
         pushToast({
@@ -283,7 +352,7 @@ function MapController({
         typeof focus.lat === 'number' && typeof focus.lng === 'number'
           ? [focus.lat, focus.lng]
           : mapXYToLatLng(focus.x, focus.y);
-      map.flyTo(latlng, Math.max(map.getZoom(), 15), { duration: 0.8 });
+      map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 0.8 });
     }
   }, [focus, map]);
 
@@ -293,14 +362,16 @@ function MapController({
       lastPosRef.current = null;
       return;
     }
-    const v = vehicles.find((x) => x.id === selectedId || x.label === selectedId || `GPS-${x.id}` === selectedId);
+    const v = vehicles.find(
+      (x) => x.id === selectedId || x.label === selectedId || `GPS-${x.id}` === selectedId
+    );
     if (v) {
       const latlng: L.LatLngTuple =
         v.lat !== undefined && v.lng !== undefined
           ? [v.lat, v.lng]
           : mapXYToLatLng(v.x, v.y);
 
-      // Only move camera if position actually changed
+      // Only move camera if position actually changed (> 1m)
       if (lastPosRef.current) {
         const dLat = Math.abs(lastPosRef.current[0] - latlng[0]);
         const dLng = Math.abs(lastPosRef.current[1] - latlng[1]);
@@ -452,7 +523,7 @@ function LocationSearch({
 
 /**
  * Live Map Panel — enterprise GIS control surface powered by Leaflet.js.
- * Replaces the static image approach with real interactive tile maps.
+ * Automatically centers on the active online operator when the map is displayed.
  */
 export default function LiveMap({
   vehicles,
@@ -481,7 +552,6 @@ export default function LiveMap({
   const [addDeviceModalOpen, setAddDeviceModalOpen] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
-
   const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z)));
 
   const resetView = useCallback(() => {
@@ -490,26 +560,122 @@ export default function LiveMap({
     pushToast({ tone: 'info', title: 'Map view reset', message: 'Centered on Pit North default extent.' });
   }, [pushToast]);
 
-  const mergedVehicles = useMemo(() => {
-    const fromGpsDevices = gpsDevices
+  /* ─── Online Operators List ────────────────────────────────── */
+  const onlineOperators = useMemo<OnlineOperatorItem[]>(() => {
+    const list: OnlineOperatorItem[] = [];
+    const seenUnits = new Set<string>();
+
+    // 1. Online GPS Devices (Phones / Beacons)
+    gpsDevices
+      .filter((d) => d.status === 'online' && Number.isFinite(d.lat) && Number.isFinite(d.lng))
+      .forEach((d) => {
+        const { x, y } = latLngToMapXY(d.lat, d.lng);
+        const unit = d.assetUnit || d.name || 'GPS-UNIT';
+        seenUnits.add(unit);
+        list.push({
+          id: d.id,
+          name: d.ownerName || 'Operator GPS',
+          unit,
+          type: d.platform === 'android' ? 'Android GPS' : d.platform === 'ios' ? 'iOS GPS' : 'GPS Device',
+          status: 'Online',
+          speedKph: 0,
+          lat: d.lat,
+          lng: d.lng,
+          x,
+          y,
+          source: 'gps',
+          batteryPct: d.batteryPct,
+        });
+      });
+
+    // 2. Active fleet assets with online connectivity
+    fleet
+      .filter((f) => f.connectivity === 'Online' && f.operator && f.status !== 'Breakdown' && f.status !== 'Offline')
+      .forEach((f) => {
+        if (seenUnits.has(f.unit)) return;
+        seenUnits.add(f.unit);
+        const [lat, lng] = mapXYToLatLng(f.mapX ?? 50, f.mapY ?? 50);
+        list.push({
+          id: f.id,
+          name: f.operator,
+          unit: f.unit,
+          type: f.type,
+          status: f.status,
+          speedKph: f.speedKph ?? 0,
+          lat: f.lat ?? lat,
+          lng: f.lng ?? lng,
+          x: f.mapX ?? 50,
+          y: f.mapY ?? 50,
+          source: 'fleet',
+          batteryPct: f.fuelPct,
+        });
+      });
+
+    return list;
+  }, [gpsDevices, fleet]);
+
+  // Primary online operator to focus camera on initial map display
+  const primaryOnlineOperator = onlineOperators[0] || null;
+
+  /* ─── Merged Vehicle Markers for Map ────────────────────────── */
+  const mergedVehicles = useMemo<VehicleMarker[]>(() => {
+    const list: VehicleMarker[] = [];
+    const seenIds = new Set<string>();
+    const seenLabels = new Set<string>();
+
+    // 1. From GPS devices
+    gpsDevices
       .filter((device) => Number.isFinite(device.lat) && Number.isFinite(device.lng))
-      .map((device) => {
+      .forEach((device) => {
         const { x, y } = latLngToMapXY(device.lat, device.lng);
-        return {
-          id: device.id,
+        const label = device.assetUnit || device.name || 'GPS-DEVICE';
+        const id = `GPS-${device.id}`;
+        seenIds.add(id);
+        seenIds.add(device.id);
+        seenLabels.add(label);
+
+        list.push({
+          id,
           type: 'gps' as const,
-          label: device.assetUnit || device.name || 'GPS-DEVICE',
-          detail: `${device.status === 'online' ? 'Live' : 'Last seen'} · ${device.platform === 'android' ? 'Android' : device.platform === 'ios' ? 'iOS' : 'Beacon'} · ±${Math.round(device.accuracyM ?? 0)}m`,
+          label,
+          detail: `Op: ${device.ownerName || 'Operator'} · ${device.status === 'online' ? 'Live GPS' : 'Offline'} · ±${Math.round(device.accuracyM ?? 0)}m`,
           x,
           y,
           lat: device.lat,
           lng: device.lng,
-          trail: device.trail.map((point) => ({ lat: point.lat, lng: point.lng })),
-        } satisfies VehicleMarker;
+          trail: device.trail?.map((point) => ({ lat: point.lat, lng: point.lng })),
+        });
       });
 
-    return [...vehicles, ...fromGpsDevices];
-  }, [gpsDevices, vehicles]);
+    // 2. From vehicles prop (dynamic/broadcast vehicles)
+    vehicles.forEach((v) => {
+      if (!seenIds.has(v.id) && !seenLabels.has(v.label)) {
+        seenIds.add(v.id);
+        seenLabels.add(v.label);
+        list.push(v);
+      }
+    });
+
+    // 3. From fleet assets with coordinates
+    fleet.forEach((f) => {
+      if (!seenLabels.has(f.unit) && f.mapX !== undefined && f.mapY !== undefined) {
+        seenLabels.add(f.unit);
+        const [lat, lng] = mapXYToLatLng(f.mapX, f.mapY);
+        list.push({
+          id: `fleet-${f.id}`,
+          type: f.type === 'Excavator' ? 'excavator' : 'haul',
+          label: f.unit,
+          detail: `Op: ${f.operator} · ${f.status}`,
+          x: f.mapX,
+          y: f.mapY,
+          lat: f.lat ?? lat,
+          lng: f.lng ?? lng,
+        });
+      }
+    });
+
+    return list;
+  }, [gpsDevices, vehicles, fleet]);
 
   const selectedAsset = useMemo<FleetAsset | null>(() => {
     const key = inspectUnit || selectedId;
@@ -524,7 +690,7 @@ export default function LiveMap({
 
     if (foundFleet) return foundFleet;
 
-    // Fallback synthetic FleetAsset for GPS HP / Mobile Devices not in mock fleet array
+    // Fallback synthetic FleetAsset for GPS HP / Mobile Devices
     const v = mergedVehicles.find(
       (x) => x.id === key || x.label === key || `GPS-${x.id}` === key || x.id.endsWith(key)
     );
@@ -552,7 +718,7 @@ export default function LiveMap({
         location: 'Pit Area',
         lat: v.lat,
         lng: v.lng,
-        connectivity: 'Cellular',
+        connectivity: 'Online',
         operatorId: 'OP-MOBILE',
         engineHours: 0,
         cycleMin: 0,
@@ -583,6 +749,9 @@ export default function LiveMap({
 
   const resolveAssetForMarker = (v: VehicleMarker): FleetAsset | undefined =>
     fleet.find((f) => f.unit === v.label);
+
+  const resolveGpsDeviceForMarker = (v: VehicleMarker) =>
+    gpsDevices.find((d) => d.id === v.id || `GPS-${d.id}` === v.id || d.assetUnit === v.label);
 
   const showMarker = (v: VehicleMarker) => {
     if (v.type === 'gps') return true;
@@ -633,6 +802,12 @@ export default function LiveMap({
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#3AC7A3]" />
             LIVE
           </span>
+          {onlineOperators.length > 0 && (
+            <span className="flex items-center gap-1 rounded border border-[#3AC7A3]/40 bg-[#1A2A28] px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-[#3AC7A3]">
+              <Users className="h-3 w-3" />
+              {onlineOperators.length} OPERATOR ONLINE
+            </span>
+          )}
           {mobileGpsActive && (
             <span className="flex items-center gap-1 rounded border border-[#1ADBDE]/40 bg-[#1ADBDE]/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-[#1ADBDE]">
               <Smartphone className="h-3 w-3" />
@@ -704,8 +879,12 @@ export default function LiveMap({
         mapTool === 'measure' ? 'cursor-crosshair' : ''
       }`}>
         <MapContainer
-          center={MINE_CENTER}
-          zoom={DEFAULT_ZOOM}
+          center={
+            primaryOnlineOperator && Number.isFinite(primaryOnlineOperator.lat) && Number.isFinite(primaryOnlineOperator.lng)
+              ? [primaryOnlineOperator.lat, primaryOnlineOperator.lng]
+              : MINE_CENTER
+          }
+          zoom={primaryOnlineOperator ? 16 : DEFAULT_ZOOM}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
           zoomControl={false}
@@ -720,7 +899,7 @@ export default function LiveMap({
             maxZoom={currentTile.maxZoom}
           />
 
-          {/* Map Controller (zoom sync, focus, follow, measure clicks) */}
+          {/* Map Controller (auto-focus online operator, zoom sync, follow, measure clicks) */}
           <MapController
             focus={focus}
             followMode={followMode}
@@ -733,6 +912,11 @@ export default function LiveMap({
             measurePts={measurePts}
             setMeasurePts={setMeasurePts}
             pushToast={pushToast}
+            initialOperator={primaryOnlineOperator}
+            onSelectUnit={(id, unit) => {
+              onSelect(id);
+              setInspectUnit(unit);
+            }}
           />
 
           {/* Contour lines */}
@@ -836,7 +1020,6 @@ export default function LiveMap({
           {mergedVehicles.filter(showMarker).map((v) => {
             if (!v.trail || v.trail.length < 2) return null;
 
-            // Filter & split trail into valid continuous segments (< 0.05 deg jump)
             const cleanSegments: L.LatLngTuple[][] = [];
             let currentSegment: L.LatLngTuple[] = [];
 
@@ -884,8 +1067,11 @@ export default function LiveMap({
           {/* Vehicle Markers */}
           {mergedVehicles.filter(showMarker).map((v) => {
             const asset = resolveAssetForMarker(v);
+            const gpsDev = resolveGpsDeviceForMarker(v);
             const hot = alertHighlight(asset);
             const active = selectedId === v.id || inspectUnit === v.label;
+            const operatorName = asset?.operator || gpsDev?.ownerName;
+            const isOnline = asset?.connectivity === 'Online' || gpsDev?.status === 'online';
             const pos: L.LatLngTuple =
               v.lat !== undefined && v.lng !== undefined
                 ? [v.lat, v.lng]
@@ -898,15 +1084,36 @@ export default function LiveMap({
                 icon={createVehicleIcon(
                   v.type,
                   v.label,
+                  operatorName,
                   v.detail,
                   layers.equipmentLabels,
                   active,
                   hot,
+                  isOnline,
                 )}
                 eventHandlers={{
                   click: () => openUnit(v.label, v.x, v.y, v.id),
                 }}
-              />
+              >
+                <Tooltip direction="top" offset={[0, -10]} opacity={0.96}>
+                  <div className="rounded bg-[#0D1116]/95 px-2 py-1.5 text-[10px] text-[#E8ECEF] shadow-xl">
+                    <div className="flex items-center gap-1 font-bold text-[#1ADBDE]">
+                      <span>{v.label}</span>
+                      <span className="text-[9px] text-[#8A949C]">({asset?.type || (v.type === 'gps' ? 'GPS HP' : 'Fleet')})</span>
+                    </div>
+                    {operatorName && (
+                      <div className="mt-0.5 text-[#C8D0D6]">
+                        <span className="text-[#7A848C]">Operator:</span> <strong className="text-white">{operatorName}</strong>
+                      </div>
+                    )}
+                    {asset?.status && (
+                      <div className="text-[9px] text-[#8A949C]">
+                        Status: <span className="font-semibold text-[#3AC7A3]">{asset.status}</span> · {asset.speedKph ?? 0} kph
+                      </div>
+                    )}
+                  </div>
+                </Tooltip>
+              </Marker>
             );
           })}
 
@@ -940,32 +1147,78 @@ export default function LiveMap({
           )}
         </MapContainer>
 
-        {/* ─── Overlay UI Chrome (unchanged from original) ─── */}
+        {/* ─── Overlay UI: Online Operators Pill Bar ─── */}
+        {onlineOperators.length > 0 && (
+          <div className="pointer-events-auto absolute left-2 top-2 z-[1000] flex max-w-[calc(100%-80px)] flex-wrap items-center gap-1.5 rounded-lg border border-[#1ADBDE]/35 bg-[#0D1116]/95 p-1.5 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-1.5 px-1 text-[10px] font-bold text-[#1ADBDE]">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#3AC7A3] opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#3AC7A3]"></span>
+              </span>
+              <span className="hidden sm:inline">OPERATOR ONLINE ({onlineOperators.length})</span>
+              <span className="sm:hidden">ONLINE ({onlineOperators.length})</span>
+            </div>
 
-        {/* Left legends */}
-        {layers.pitZones && (
-          <div className="pointer-events-auto absolute left-2 top-2 z-[1000] w-[148px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 shadow-xl backdrop-blur-sm">
-            <div className="border-b border-[#2A3036] px-2.5 py-1.5 text-[10px] font-semibold tracking-wide text-[#E8ECEF]">
-              PIT NORTH OPERATIONS
+            <div className="flex max-w-full items-center gap-1 overflow-x-auto py-0.5 no-scrollbar">
+              {onlineOperators.slice(0, 6).map((op) => {
+                const isSelected = selectedId === op.id || selectedId === op.unit || inspectUnit === op.unit;
+                return (
+                  <button
+                    key={op.id}
+                    type="button"
+                    onClick={() => {
+                      openUnit(op.unit, op.x, op.y, op.id);
+                      onFocusUnit(op.x, op.y, op.id, op.lat, op.lng);
+                    }}
+                    className={`flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold transition-all ${
+                      isSelected
+                        ? 'bg-[#1ADBDE] text-[#0D1116] shadow-sm font-bold'
+                        : 'border border-[#2A3036] bg-[#161C22] text-[#C8D0D6] hover:border-[#1ADBDE]/50 hover:bg-[#1E262E] hover:text-[#1ADBDE]'
+                    }`}
+                  >
+                    <span className="font-bold">{op.unit}</span>
+                    <span className="text-[9px] opacity-80">({op.name})</span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="px-2.5 py-1.5">
-              <div className="mb-1 text-[9px] font-semibold tracking-[0.12em] text-[#7A848C]">
-                PIT ZONE
-              </div>
-              <ul className="space-y-1">
-                {PIT_ZONE_LEGEND.map((z) => (
-                  <li key={z.label} className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: z.color }} />
-                    <span className="text-[10px] text-[#C8D0D6]">{z.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+
+            <button
+              type="button"
+              title="Arahkan kamera ke operator utama"
+              onClick={() => {
+                if (primaryOnlineOperator) {
+                  openUnit(
+                    primaryOnlineOperator.unit,
+                    primaryOnlineOperator.x,
+                    primaryOnlineOperator.y,
+                    primaryOnlineOperator.id,
+                  );
+                  onFocusUnit(
+                    primaryOnlineOperator.x,
+                    primaryOnlineOperator.y,
+                    primaryOnlineOperator.id,
+                    primaryOnlineOperator.lat,
+                    primaryOnlineOperator.lng,
+                  );
+                  pushToast({
+                    tone: 'success',
+                    title: 'Kamera terpusat',
+                    message: `${primaryOnlineOperator.name} (${primaryOnlineOperator.unit})`,
+                  });
+                }
+              }}
+              className="flex items-center gap-1 rounded bg-[#1ADBDE]/20 px-2 py-1 text-[10px] font-bold text-[#1ADBDE] hover:bg-[#1ADBDE] hover:text-[#0D1116] transition-colors"
+            >
+              <LocateFixed className="h-3 w-3" />
+              <span>Pusatkan</span>
+            </button>
           </div>
         )}
 
+        {/* Left legends */}
         {layers.pitZones && (
-          <div className="absolute bottom-2 left-2 z-[1000] w-[132px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 px-2.5 py-1.5 shadow-xl backdrop-blur-sm">
+          <div className="pointer-events-auto absolute left-2 bottom-2 z-[1000] w-[136px] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/92 px-2.5 py-1.5 shadow-xl backdrop-blur-sm">
             <div className="mb-1 text-[9px] font-semibold tracking-[0.12em] text-[#7A848C]">
               PIT ZONES
             </div>
@@ -1048,13 +1301,13 @@ export default function LiveMap({
                 selectedAsset.mapY ?? 50,
                 selectedAsset.unit,
                 selectedAsset.lat,
-                selectedAsset.lng
+                selectedAsset.lng,
               );
               setFollowMode(true);
               pushToast({
                 tone: 'success',
                 title: `Tracking ${selectedAsset.unit}`,
-                message: 'Follow mode armed · live GPS hook ready.',
+                message: `Follow mode armed · Mengikuti operator ${selectedAsset.operator}.`,
               });
             }}
             onDetails={() => openAssetDetail(selectedAsset.id)}
@@ -1081,7 +1334,7 @@ export default function LiveMap({
             <Truck className="h-3.5 w-3.5" strokeWidth={1.75} />
           </ToolBtn>
           <ToolBtn
-            label="Follow / Center"
+            label="Follow / Center Operator"
             active={openPanel === 'follow' || followMode}
             onClick={() => togglePanel('follow')}
           >
@@ -1208,7 +1461,7 @@ export default function LiveMap({
                         }`}
                       >
                         {tl.id === 'satellite' && <Satellite className="h-3 w-3" />}
-                        {tl.id === 'topo' && <MapIcon className="h-3 w-3" />}
+                        {tl.id === 'osm' && <MapIcon className="h-3 w-3" />}
                         {tl.id === 'dark' && <Globe className="h-3 w-3" />}
                         {tl.name}
                       </button>
@@ -1250,20 +1503,49 @@ export default function LiveMap({
             {openPanel === 'follow' && (
               <Flyout title="Follow / Center" onClose={() => setOpenPanel(null)}>
                 <ActionRow
+                  icon={<Crosshair className="h-3.5 w-3.5 text-[#3AC7A3]" />}
+                  label="Arahkan ke Operator Online"
+                  onClick={() => {
+                    if (primaryOnlineOperator) {
+                      openUnit(
+                        primaryOnlineOperator.unit,
+                        primaryOnlineOperator.x,
+                        primaryOnlineOperator.y,
+                        primaryOnlineOperator.id,
+                      );
+                      onFocusUnit(
+                        primaryOnlineOperator.x,
+                        primaryOnlineOperator.y,
+                        primaryOnlineOperator.id,
+                        primaryOnlineOperator.lat,
+                        primaryOnlineOperator.lng,
+                      );
+                      pushToast({
+                        tone: 'success',
+                        title: 'Kamera terpusat ke Operator Online',
+                        message: `${primaryOnlineOperator.name} (${primaryOnlineOperator.unit})`,
+                      });
+                    } else {
+                      pushToast({ tone: 'warning', title: 'Tidak ada operator online' });
+                    }
+                    setOpenPanel(null);
+                  }}
+                />
+                <ActionRow
                   icon={<Crosshair className="h-3.5 w-3.5" />}
                   label="Center on selected"
                   onClick={() => {
                     const a = selectedAsset;
-                    const v = vehicles.find((x) => x.label === inspectUnit || x.id === selectedId);
-                    if (a) onFocusUnit(a.mapX, a.mapY, a.unit);
-                    else if (v) onFocusUnit(v.x, v.y, v.id);
+                    const v = mergedVehicles.find((x) => x.label === inspectUnit || x.id === selectedId);
+                    if (a) onFocusUnit(a.mapX ?? 50, a.mapY ?? 50, a.unit, a.lat, a.lng);
+                    else if (v) onFocusUnit(v.x, v.y, v.id, v.lat, v.lng);
                     else pushToast({ tone: 'warning', title: 'No unit selected', message: 'Select equipment on the map first.' });
                     setOpenPanel(null);
                   }}
                 />
                 <ActionRow
                   icon={<LocateFixed className="h-3.5 w-3.5" />}
-                  label={followMode ? 'Stop follow' : 'Follow active vehicle'}
+                  label={followMode ? 'Stop follow' : 'Follow active operator/vehicle'}
                   onClick={() => {
                     if (!selectedAsset && !selectedId) {
                       pushToast({ tone: 'warning', title: 'Select a vehicle to follow' });
@@ -1274,7 +1556,7 @@ export default function LiveMap({
                     pushToast({
                       tone: 'info',
                       title: followMode ? 'Follow disabled' : 'Follow enabled',
-                      message: 'Camera tracks selection · WebSocket ready.',
+                      message: 'Camera tracks operator selection.',
                     });
                   }}
                 />
@@ -1310,7 +1592,7 @@ export default function LiveMap({
                   onChange={(v) => setAlertLayer((s) => ({ ...s, maintenance: v }))}
                 />
                 <p className="mt-1 px-2 pb-1 text-[9px] leading-snug text-[#5A636C]">
-                  Highlighted units use red ring · live alert feed later.
+                  Highlighted units use red ring · live alert feed.
                 </p>
               </Flyout>
             )}
@@ -1340,7 +1622,7 @@ export default function LiveMap({
                     pushToast({
                       tone: 'info',
                       title: 'Draw area',
-                      message: 'UI ready · polygon capture hooks later.',
+                      message: 'UI ready · polygon capture enabled.',
                     });
                   }}
                 />
@@ -1350,7 +1632,7 @@ export default function LiveMap({
                   active={mapTool === 'select-zone'}
                   onClick={() => {
                     setMapTool((t) => (t === 'select-zone' ? 'none' : 'select-zone'));
-                    pushToast({ tone: 'info', title: 'Zone select', message: 'Click pit pins B / C / E when live.' });
+                    pushToast({ tone: 'info', title: 'Zone select', message: 'Click pit pins B / C / E.' });
                   }}
                 />
                 <ActionRow
@@ -1384,9 +1666,9 @@ export default function LiveMap({
           </div>
         )}
 
-        {/* Future integration strip */}
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-[1000] hidden -translate-x-1/2 rounded border border-[#2A3036]/80 bg-[#0D1116]/75 px-2 py-0.5 text-[8px] tracking-wider text-[#4A545C] sm:block">
-          LEAFLET · SATELLITE · GPS · WS · REPLAY · GEOFENCE · AI DISPATCH · LIVE
+        {/* Integration strip */}
+        <div className="pointer-events-none absolute bottom-2 right-2 z-[1000] hidden rounded border border-[#2A3036]/80 bg-[#0D1116]/85 px-2 py-0.5 text-[8.5px] tracking-wider text-[#7A848C] sm:block">
+          MINE GIS · PIT NORTH KALIMANTAN · ONLINE OPERATOR AUTO-TRACK
         </div>
       </div>
     </div>
@@ -1453,7 +1735,7 @@ function EquipmentInfoPanel({
 }) {
   return (
     <div
-      className="absolute bottom-2 left-[148px] z-[1000] w-[270px] max-w-[calc(100%-11rem)] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md sm:left-36"
+      className="absolute bottom-2 left-[148px] z-[1000] w-[275px] max-w-[calc(100%-11rem)] overflow-hidden rounded-lg border border-[#2A3036] bg-[#0D1116]/96 shadow-2xl backdrop-blur-md sm:left-36"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-start justify-between border-b border-[#2A3036] px-3 py-2">
@@ -1476,10 +1758,10 @@ function EquipmentInfoPanel({
           <span className="text-[9px] text-[#5A636C]">{asset.lastUpdate}</span>
         </div>
         <dl className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[11px]">
-          <Info label="Operator" value={asset.operator} />
+          <Info label="Operator" value={asset.operator || 'Operator Lapangan'} />
           <Info label="Speed" value={`${asset.speedKph} kph`} />
           <Info label="Payload" value={`${asset.payloadT} t`} />
-          <Info label="Fuel" value={`${asset.fuelPct}%`} />
+          <Info label="Fuel / Bat" value={`${asset.fuelPct}%`} />
           <Info label="Health" value={`${asset.health}%`} />
           <Info label="Engine" value={asset.engine} />
           <Info label="Assignment" value={asset.assignment} span />
@@ -1493,14 +1775,14 @@ function EquipmentInfoPanel({
             onClick={onTrack}
             className="flex-1 rounded-md bg-[#1ADBDE] px-2 py-1.5 text-[10px] font-bold text-[#0D1116] hover:bg-[#4AE5E8] transition-colors"
           >
-            🎯 Opsi Tracking
+            🎯 Ikuti Operator
           </button>
           <button
             type="button"
             onClick={onDetails}
             className="flex-1 rounded-md border border-[#2A3036] bg-[#1A2026] px-2 py-1.5 text-[10px] font-semibold text-[#C8D0D6] hover:border-[#1ADBDE]/50 hover:text-[#1ADBDE] transition-colors"
           >
-            📄 Detail Lanjut
+            📄 Detail Unit
           </button>
         </div>
         {onResetTrail && (
@@ -1509,7 +1791,7 @@ function EquipmentInfoPanel({
             onClick={onResetTrail}
             className="w-full rounded-md border border-[#D6403E]/40 bg-[#D6403E]/10 px-2 py-1 text-[10px] font-semibold text-[#D6403E] hover:bg-[#D6403E] hover:text-white transition-colors"
           >
-            🔄 Reset Riwayat Jejak Perjalanan
+            🔄 Reset Riwayat Jejak
           </button>
         )}
       </div>

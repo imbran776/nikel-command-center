@@ -205,8 +205,8 @@ export default function DeviceRegistrationPage() {
       startBackgroundTracking();
 
       countdownRef.current = setTimeout(() => {
-        navigate('/live-ops');
-      }, 3000);
+        navigate(`/track?code=${code}&unit=${encodeURIComponent(unitLabel || deviceName)}&auto=true`);
+      }, 2500);
     } catch (err: unknown) {
       const ge = err as GeolocationPositionError;
       let msg = 'Gagal mengakses lokasi GPS.';
@@ -335,7 +335,14 @@ export default function DeviceRegistrationPage() {
               </div>
             </div>
           )}
-          <p className="mt-4 text-xs text-[#1ADBDE]">Mengarahkan ke Live Ops dalam 3 detik…</p>
+          <button
+            type="button"
+            onClick={() => navigate(`/track?code=${code}&unit=${encodeURIComponent(unitLabel || deviceName)}&auto=true`)}
+            className="mt-5 w-full rounded-xl bg-[#1ADBDE] py-3 text-xs font-bold tracking-wider text-[#0D1116] hover:bg-[#4AE5E8] shadow-lg shadow-[#1ADBDE]/20"
+          >
+            🚛 BUKA KABIN LACAK KENDARAAN SEKARANG
+          </button>
+          <p className="mt-2 text-[10px] text-[#6A737C]">Otomatis membuka kabin dalam 2 detik…</p>
         </div>
       </div>
     );

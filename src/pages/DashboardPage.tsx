@@ -32,45 +32,29 @@ export default function DashboardPage() {
   } = useVehiclePositions();
   const { rows, sortKey, sortDir, toggleSort } = useEquipmentStatus();
   const { bars, total, target, xLabels } = useProductionData();
-  const { gpsDevices } = useOps();
-
-  // Merge GPS devices (from OpsContext / server polling) into the vehicles array
-  // so they appear as markers on the LiveMap alongside regular mining vehicles
-  const allVehicles = useMemo<VehicleMarker[]>(() => {
-    const gpsMarkers: VehicleMarker[] = gpsDevices
-      .filter((d) => d.lat && d.lng && d.status === 'online')
-      .map((d) => {
-        const { x, y } = latLngToMapXY(d.lat, d.lng);
-        const accM = d.accuracyM ?? 0;
-        const accStr = accM >= 1000 ? `±${(accM / 1000).toFixed(1)}km` : accM > 0 ? `±${Math.round(accM)}m` : 'Live';
-
-        return {
-          id: `GPS-${d.id}`,
-          type: 'gps' as const,
-          label: d.assetUnit || d.name || 'MOBILE-GPS',
-          detail: `📱 ${accStr} · Live`,
-          x,
-          y,
-          lat: d.lat,
-          lng: d.lng,
-          heading: 0,
-          trail: d.trail?.map((t) => ({ lat: t.lat, lng: t.lng })),
-        };
-      });
-
-    // Deduplicate: if a GPS marker already exists in vehicles (from BroadcastChannel),
-    // prefer the one from vehicles (which has more frequent updates)
-    const vehicleIds = new Set(vehicles.map((v) => v.id));
-    const uniqueGps = gpsMarkers.filter((g) => !vehicleIds.has(g.id));
-
-    return [...vehicles, ...uniqueGps];
-  }, [vehicles, gpsDevices]);
+  const { fleet, gpsDevices } = useOps();
 
   const locateEquipment = (row: EquipmentRow) => {
-    const seed = row.unit.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    const x = 40 + (seed % 30);
-    const y = 30 + (seed % 40);
-    focusOn(x, y, row.unit);
+    const asset = fleet.find((f) => f.unit === row.unit || f.id === row.id);
+    if (asset) {
+      focusOn(asset.mapX ?? 50, asset.mapY ?? 50, asset.unit, asset.lat, asset.lng);
+      setSelectedId(asset.unit);
+      return;
+    }
+    const dev = gpsDevices.find((d) => d.assetUnit === row.unit || d.name === row.unit || d.id === row.id);
+    if (dev && dev.lat && dev.lng) {
+      const xy = latLngToMapXY(dev.lat, dev.lng);
+      focusOn(xy.x, xy.y, dev.id, dev.lat, dev.lng);
+      setSelectedId(dev.id);
+      return;
+    }
+    const v = vehicles.find((x) => x.label === row.unit || x.id === row.id);
+    if (v) {
+      focusOn(v.x, v.y, v.id, v.lat, v.lng);
+      setSelectedId(v.id);
+      return;
+    }
+    focusOn(50, 50, row.unit);
     setSelectedId(row.unit);
   };
 

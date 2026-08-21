@@ -82,12 +82,13 @@ export default function App() {
     }
   }, [user, activeNav, canAccess, setActiveNav]);
 
-  if (isTrackerMode) {
+  if (isTrackerMode || isRegistrationMode) {
     return (
       <Routes>
         <Route path="/track" element={<MobileTrackerPage />} />
         <Route path="/track/join" element={<DeviceRegistrationPage />} />
         <Route path="/track/register" element={<DeviceRegistrationPage />} />
+        <Route path="*" element={<MobileTrackerPage />} />
       </Routes>
     );
   }

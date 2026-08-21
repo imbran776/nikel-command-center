@@ -275,6 +275,17 @@ export interface GpsDevice {
   lastSeen: string;       // ISO timestamp
   batteryPct?: number;
   accuracyM?: number;
+  speedKph?: number;
+  heading?: number;
+  operationalStatus?: 'Hauling' | 'Loading' | 'Dumping' | 'Queuing' | 'Standby' | 'Breakdown';
+  engineStatus?: 'Running' | 'Idle' | 'Off';
+  payloadT?: number;
+  fuelPct?: number;
+  assignment?: string;
+  destination?: string;
+  tripsToday?: number;
+  sos?: boolean;
+  sosMessage?: string;
   /** Current position */
   lat: number;
   lng: number;

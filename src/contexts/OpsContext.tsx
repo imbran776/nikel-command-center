@@ -22,6 +22,7 @@ import {
   type Locale,
   type ThemeMode,
 } from '../lib/i18n';
+import { mapXYToLatLng } from '../lib/mapConfig';
 import type {
   EquipmentRow,
   FleetAsset,
@@ -209,10 +210,11 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     labels: true,
     heat: false,
   });
+  const [fleet, setFleet] = useState<FleetAsset[]>(() => FLEET.map((f) => ({ ...f })));
   const [gpsDevices, setGpsDevices] = useState<GpsDevice[]>([
     {
       id: 'gps-1',
-      name: "Andi's Phone",
+      name: "Andi's Phone (HT-04)",
       type: 'phone',
       platform: 'android',
       ownerId: 'op-1',
@@ -223,13 +225,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       lastSeen: new Date().toISOString(),
       batteryPct: 87,
       accuracyM: 4,
-      lat: -6.85,
-      lng: 112.52,
+      lat: mapXYToLatLng(62, 36)[0],
+      lng: mapXYToLatLng(62, 36)[1],
       trail: [
-        { lat: -6.8, lng: 112.45, ts: new Date(Date.now() - 3600000).toISOString() },
-        { lat: -6.82, lng: 112.48, ts: new Date(Date.now() - 1800000).toISOString() },
-        { lat: -6.84, lng: 112.5, ts: new Date(Date.now() - 900000).toISOString() },
-        { lat: -6.85, lng: 112.52, ts: new Date().toISOString() },
+        { lat: mapXYToLatLng(82, 36)[0], lng: mapXYToLatLng(82, 36)[1], ts: new Date(Date.now() - 3600000).toISOString() },
+        { lat: mapXYToLatLng(76, 38)[0], lng: mapXYToLatLng(76, 38)[1], ts: new Date(Date.now() - 1800000).toISOString() },
+        { lat: mapXYToLatLng(70, 40)[0], lng: mapXYToLatLng(70, 40)[1], ts: new Date(Date.now() - 900000).toISOString() },
+        { lat: mapXYToLatLng(66, 37)[0], lng: mapXYToLatLng(66, 37)[1], ts: new Date(Date.now() - 300000).toISOString() },
+        { lat: mapXYToLatLng(62, 36)[0], lng: mapXYToLatLng(62, 36)[1], ts: new Date().toISOString() },
       ],
       inviteCode: 'INV-ABC123',
       inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
@@ -237,7 +240,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     },
     {
       id: 'gps-2',
-      name: "Budi's Beacon",
+      name: "Budi's Beacon (EX-01)",
       type: 'beacon',
       platform: 'ble',
       ownerId: 'op-2',
@@ -248,12 +251,13 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       lastSeen: new Date().toISOString(),
       batteryPct: 92,
       accuracyM: 3,
-      lat: -6.78,
-      lng: 112.55,
+      lat: mapXYToLatLng(54, 74)[0],
+      lng: mapXYToLatLng(54, 74)[1],
       trail: [
-        { lat: -6.75, lng: 112.52, ts: new Date(Date.now() - 3600000).toISOString() },
-        { lat: -6.77, lng: 112.54, ts: new Date(Date.now() - 1800000).toISOString() },
-        { lat: -6.78, lng: 112.55, ts: new Date().toISOString() },
+        { lat: mapXYToLatLng(34, 60)[0], lng: mapXYToLatLng(34, 60)[1], ts: new Date(Date.now() - 3600000).toISOString() },
+        { lat: mapXYToLatLng(42, 66)[0], lng: mapXYToLatLng(42, 66)[1], ts: new Date(Date.now() - 1800000).toISOString() },
+        { lat: mapXYToLatLng(48, 70)[0], lng: mapXYToLatLng(48, 70)[1], ts: new Date(Date.now() - 900000).toISOString() },
+        { lat: mapXYToLatLng(54, 74)[0], lng: mapXYToLatLng(54, 74)[1], ts: new Date().toISOString() },
       ],
       inviteCode: 'INV-XYZ789',
       inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
@@ -318,6 +322,17 @@ export function OpsProvider({ children }: { children: ReactNode }) {
                   lng: serverDev.lng ?? updated[idx].lng,
                   accuracyM: serverDev.accuracyM ?? updated[idx].accuracyM,
                   batteryPct: serverDev.batteryPct ?? updated[idx].batteryPct,
+                  speedKph: serverDev.speedKph ?? updated[idx].speedKph,
+                  heading: serverDev.heading ?? updated[idx].heading,
+                  operationalStatus: serverDev.operationalStatus || updated[idx].operationalStatus,
+                  engineStatus: serverDev.engineStatus || updated[idx].engineStatus,
+                  payloadT: serverDev.payloadT ?? updated[idx].payloadT,
+                  fuelPct: serverDev.fuelPct ?? updated[idx].fuelPct,
+                  destination: serverDev.destination || updated[idx].destination,
+                  assignment: serverDev.assignment || updated[idx].assignment,
+                  tripsToday: serverDev.tripsToday ?? updated[idx].tripsToday,
+                  sos: serverDev.sos ?? updated[idx].sos,
+                  sosMessage: serverDev.sosMessage || updated[idx].sosMessage,
                   status: 'online',
                   lastSeen: serverDev.lastSeen || new Date().toISOString(),
                   registeredAt: updated[idx].registeredAt || new Date().toISOString(),
@@ -331,18 +346,56 @@ export function OpsProvider({ children }: { children: ReactNode }) {
                   type: 'phone',
                   platform: serverDev.platform || 'android',
                   ownerId: 'op-mobile',
-                  ownerName: serverDev.ownerName || 'Driver / Field Operator',
+                  ownerName: serverDev.ownerName || serverDev.operatorName || 'Driver / Field Operator',
                   assetId: newUnit || '',
                   assetUnit: newUnit || '',
                   status: 'online',
                   lastSeen: serverDev.lastSeen || new Date().toISOString(),
                   batteryPct: serverDev.batteryPct || 100,
                   accuracyM: serverDev.accuracyM || 5,
+                  speedKph: serverDev.speedKph ?? 0,
+                  heading: serverDev.heading ?? 0,
+                  operationalStatus: serverDev.operationalStatus || 'Hauling',
+                  engineStatus: serverDev.engineStatus || 'Running',
+                  payloadT: serverDev.payloadT ?? 42,
+                  fuelPct: serverDev.fuelPct ?? 85,
+                  destination: serverDev.destination || 'Crusher Pad',
+                  assignment: serverDev.assignment || 'Pit North Haulage',
+                  tripsToday: serverDev.tripsToday ?? 0,
+                  sos: serverDev.sos ?? false,
+                  sosMessage: serverDev.sosMessage,
                   lat: serverDev.lat || 0,
                   lng: serverDev.lng || 0,
                   trail: serverDev.trail || [],
                   inviteCode: serverDev.code,
                   createdAt: new Date().toISOString(),
+                });
+              }
+
+              // Update linked fleet asset if exists
+              const targetUnit = newUnit;
+              if (targetUnit) {
+                setFleet((prevFleet) => {
+                  const fIdx = prevFleet.findIndex((f) => f.unit === targetUnit || f.id === targetUnit);
+                  if (fIdx >= 0 && (serverDev.lat || serverDev.speedKph !== undefined)) {
+                    const copy = [...prevFleet];
+                    const existingAsset = copy[fIdx];
+                    copy[fIdx] = {
+                      ...existingAsset,
+                      lat: serverDev.lat ?? existingAsset.lat,
+                      lng: serverDev.lng ?? existingAsset.lng,
+                      speedKph: serverDev.speedKph ?? existingAsset.speedKph,
+                      status: serverDev.operationalStatus ? (serverDev.operationalStatus as any) : existingAsset.status,
+                      fuelPct: serverDev.fuelPct ?? existingAsset.fuelPct,
+                      payloadT: serverDev.payloadT ?? existingAsset.payloadT,
+                      destination: serverDev.destination || existingAsset.destination,
+                      assignment: serverDev.assignment || existingAsset.assignment,
+                      connectivity: 'Online',
+                      lastUpdate: 'Just now',
+                    };
+                    return copy;
+                  }
+                  return prevFleet;
                 });
               }
             }
@@ -702,7 +755,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       theme: settings.theme,
       selectedEquipmentId,
       setSelectedEquipmentId,
-      fleet: FLEET,
+      fleet,
       selectedAssetId,
       setSelectedAssetId,
       openAssetDetail,

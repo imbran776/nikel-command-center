@@ -84,12 +84,23 @@ function gpsApiPlugin(): Plugin {
                 inviteCode: key,
                 name: payload.deviceName || existing.name || 'HP GPS Device',
                 unitLabel: payload.unitLabel || existing.unitLabel || 'MOB-01',
+                operatorName: payload.operatorName || payload.driverName || existing.operatorName || 'Operator Lapangan',
                 platform: payload.platform || existing.platform || 'android',
                 lat: payload.lat,
                 lng: payload.lng,
-                accuracyM: payload.accuracy,
+                speedKph: payload.speedKph ?? 0,
+                heading: payload.heading ?? 0,
+                status: payload.status || 'online',
+                operationalStatus: payload.operationalStatus || 'Hauling',
+                engineStatus: payload.engineStatus || 'Running',
+                payloadT: payload.payloadT ?? 42,
+                fuelPct: payload.fuelPct ?? 85,
+                destination: payload.destination || 'Crusher Pad',
+                assignment: payload.assignment || 'Pit North Haulage',
+                tripsToday: payload.tripsToday ?? 0,
+                sos: payload.sos ?? false,
+                accuracyM: payload.accuracy || payload.accuracyM,
                 batteryPct: payload.batteryPct ?? 98,
-                status: 'online',
                 lastSeen: new Date().toISOString(),
                 registeredAt: new Date().toISOString(),
                 trail: [{ lat: payload.lat, lng: payload.lng, ts: new Date().toISOString() }],
@@ -110,7 +121,32 @@ function gpsApiPlugin(): Plugin {
           req.on('end', () => {
             try {
               const payload = JSON.parse(body)
-              const { id, code, lat, lng, accuracy, batteryPct, unitLabel, deviceName, name } = payload
+              const {
+                id,
+                code,
+                lat,
+                lng,
+                accuracy,
+                accuracyM,
+                batteryPct,
+                unitLabel,
+                deviceName,
+                name,
+                speedKph,
+                heading,
+                status,
+                operationalStatus,
+                engineStatus,
+                payloadT,
+                fuelPct,
+                destination,
+                assignment,
+                tripsToday,
+                sos,
+                sosMessage,
+                operatorName,
+                driverName,
+              } = payload
               const key = code || id
               if (!key) {
                 res.statusCode = 400
@@ -127,7 +163,6 @@ function gpsApiPlugin(): Plugin {
 
               let newTrail = prevTrail
               if (!isReasonableJump) {
-                // Jump > 5km detected (e.g. from old teleport offset) -> reset trail to current real location
                 newTrail = [{ lat, lng, ts: new Date().toISOString() }]
               } else if (isSignificantMove) {
                 newTrail = [...prevTrail, { lat, lng, ts: new Date().toISOString() }].slice(-60)
@@ -138,11 +173,23 @@ function gpsApiPlugin(): Plugin {
                 id: existing.id || key,
                 name: deviceName || name || unitLabel || existing.name || 'HP GPS Device',
                 unitLabel: unitLabel || existing.unitLabel || 'MOB-01',
+                operatorName: operatorName || driverName || existing.operatorName || 'Operator Lapangan',
                 lat,
                 lng,
-                accuracyM: accuracy ?? existing.accuracyM,
+                speedKph: speedKph !== undefined ? speedKph : existing.speedKph ?? 0,
+                heading: heading !== undefined ? heading : existing.heading ?? 0,
+                accuracyM: accuracy ?? accuracyM ?? existing.accuracyM,
                 batteryPct: batteryPct ?? existing.batteryPct,
-                status: 'online',
+                status: status || 'online',
+                operationalStatus: operationalStatus || existing.operationalStatus || 'Hauling',
+                engineStatus: engineStatus || existing.engineStatus || 'Running',
+                payloadT: payloadT !== undefined ? payloadT : existing.payloadT ?? 42,
+                fuelPct: fuelPct !== undefined ? fuelPct : existing.fuelPct ?? 85,
+                destination: destination || existing.destination || 'Crusher Pad',
+                assignment: assignment || existing.assignment || 'Pit North Haulage',
+                tripsToday: tripsToday !== undefined ? tripsToday : existing.tripsToday ?? 0,
+                sos: sos !== undefined ? sos : existing.sos ?? false,
+                sosMessage: sosMessage || existing.sosMessage,
                 lastSeen: new Date().toISOString(),
                 trail: newTrail,
               }
