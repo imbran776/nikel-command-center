@@ -11,6 +11,8 @@ import {
   X,
 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import { useOps } from '../../contexts/OpsContext';
 import type { VehicleMarker } from '../../types/fms';
 
 interface AddDeviceModalProps {
@@ -30,6 +32,7 @@ export default function AddDeviceModal({
   mobileGpsError,
   onToggleMobileGps,
 }: AddDeviceModalProps) {
+  const { generateFullDeviceInvite } = useOps();
   const [tab, setTab] = useState<'qr' | 'direct' | 'manual'>('qr');
   const [copied, setCopied] = useState(false);
   const [unitLabel, setUnitLabel] = useState('HT-888');
@@ -37,14 +40,31 @@ export default function AddDeviceModal({
   const [operator, setOperator] = useState('Budi S.');
   const [submitted, setSubmitted] = useState(false);
 
+  // States for Auto-Link / QR Generation
+  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [qrUnitLabel, setQrUnitLabel] = useState('');
+  const [qrOperator, setQrOperator] = useState('');
+  const [qrDeviceName, setQrDeviceName] = useState('HP Tracker');
+  const [qrArmadaType, setQrArmadaType] = useState('haul');
+
   if (!isOpen) return null;
 
-  const trackerUrl = `${window.location.origin}${window.location.pathname}#track`;
-
-  const copyTrackerLink = () => {
-    navigator.clipboard.writeText(trackerUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleGenerateLink = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsGenerating(true);
+    try {
+      const { url } = await generateFullDeviceInvite({
+        unitLabel: qrUnitLabel,
+        operatorName: qrOperator,
+        deviceName: qrDeviceName,
+        armadaType: qrArmadaType,
+      });
+      setGeneratedUrl(url);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsGenerating(false);
   };
 
   const handleManualSubmit = (e: FormEvent) => {
@@ -123,57 +143,54 @@ export default function AddDeviceModal({
         <div className="p-5 text-xs">
           {tab === 'qr' && (
             <div className="space-y-4 text-center">
-              <p className="text-[#A0AABC] leading-relaxed">
-                Scan QR Code ini menggunakan kamera HP Anda atau klik tombol salin link untuk mentransmisikan lokasi pergerakan HP ke peta secara langsung!
-              </p>
-
-              {/* QR Code visual box */}
-              <div className="mx-auto flex h-44 w-44 flex-col items-center justify-center rounded-xl border border-[#2A3036] bg-white p-3 shadow-inner">
-                <svg viewBox="0 0 100 100" className="h-full w-full" fill="#0D1116">
-                  {/* Outer corner boxes */}
-                  <rect x="5" y="5" width="30" height="30" fill="none" stroke="#0D1116" strokeWidth="4" />
-                  <rect x="12" y="12" width="16" height="16" />
-                  <rect x="65" y="5" width="30" height="30" fill="none" stroke="#0D1116" strokeWidth="4" />
-                  <rect x="72" y="12" width="16" height="16" />
-                  <rect x="5" y="65" width="30" height="30" fill="none" stroke="#0D1116" strokeWidth="4" />
-                  <rect x="12" y="72" width="16" height="16" />
-                  {/* Pattern dots */}
-                  <rect x="42" y="8" width="6" height="6" />
-                  <rect x="52" y="18" width="6" height="6" />
-                  <rect x="42" y="28" width="6" height="6" />
-                  <rect x="10" y="42" width="6" height="6" />
-                  <rect x="25" y="50" width="6" height="6" />
-                  <rect x="42" y="42" width="16" height="16" fill="#1ADBDE" />
-                  <rect x="65" y="42" width="6" height="6" />
-                  <rect x="80" y="50" width="6" height="6" />
-                  <rect x="42" y="65" width="6" height="6" />
-                  <rect x="52" y="75" width="6" height="6" />
-                  <rect x="65" y="65" width="10" height="10" />
-                  <rect x="80" y="75" width="12" height="12" />
-                </svg>
-              </div>
-
-              {/* Action Link Buttons */}
-              <div className="flex flex-col gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={copyTrackerLink}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#1ADBDE] py-2.5 font-bold text-[#0D1116] hover:bg-[#4AE5E8]"
-                >
-                  {copied ? <CheckCircle2 className="h-4 w-4 text-[#0D1116]" /> : <Copy className="h-4 w-4" />}
-                  {copied ? 'LINK TRACKER DISALIN!' : 'SALIN LINK TRACKER HP'}
-                </button>
-
-                <a
-                  href={trackerUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#2A3036] bg-[#151A1F] py-2 font-semibold text-[#C8D0D6] hover:border-[#1ADBDE]/50 hover:text-[#1ADBDE]"
-                >
-                  <ExternalLink className="h-4 w-4 text-[#1ADBDE]" />
-                  Buka Halaman Pemancar GPS di Tab Ini
-                </a>
-              </div>
+              {!generatedUrl ? (
+                <form onSubmit={handleGenerateLink} className="space-y-3.5 text-left">
+                  <p className="text-[#A0AABC] leading-relaxed text-center mb-4">
+                    Isi data unit dan operator terlebih dahulu untuk membuat link tracker & QR Code otomatis.
+                  </p>
+                  <div>
+                    <label className="mb-1 block font-semibold text-[#A0AABC]">Nomor Lambung / ID Unit</label>
+                    <input type="text" required value={qrUnitLabel} onChange={e => setQrUnitLabel(e.target.value)} placeholder="Contoh: HT-999" className="w-full rounded-md border border-[#2A3036] bg-[#151A1F] px-3 py-2 font-mono text-xs text-[#E8ECEF] focus:border-[#1ADBDE] focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block font-semibold text-[#A0AABC]">Nama Operator / Driver</label>
+                    <input type="text" required value={qrOperator} onChange={e => setQrOperator(e.target.value)} placeholder="Nama Operator" className="w-full rounded-md border border-[#2A3036] bg-[#151A1F] px-3 py-2 font-mono text-xs text-[#E8ECEF] focus:border-[#1ADBDE] focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block font-semibold text-[#A0AABC]">Nama Perangkat HP</label>
+                    <input type="text" required value={qrDeviceName} onChange={e => setQrDeviceName(e.target.value)} placeholder="Contoh: HP Budi" className="w-full rounded-md border border-[#2A3036] bg-[#151A1F] px-3 py-2 font-mono text-xs text-[#E8ECEF] focus:border-[#1ADBDE] focus:outline-none" />
+                  </div>
+                  <button type="submit" disabled={isGenerating} className="mt-2 w-full rounded-lg bg-[#1ADBDE] py-2.5 font-bold text-[#0D1116] hover:bg-[#4AE5E8] disabled:opacity-50">
+                    {isGenerating ? 'Membuat Link...' : 'Buat Link Tracker & QR Code'}
+                  </button>
+                </form>
+              ) : (
+                <div className="space-y-4 text-center">
+                  <p className="text-[#A0AABC] leading-relaxed">
+                    Scan QR Code ini menggunakan kamera HP Anda atau klik tombol salin link untuk mentransmisikan lokasi pergerakan HP ke peta secara langsung!
+                  </p>
+                  <div className="mx-auto flex h-44 w-44 flex-col items-center justify-center rounded-xl border border-[#2A3036] bg-white p-3 shadow-inner">
+                    <QRCodeSVG value={generatedUrl} size={150} level="M" />
+                  </div>
+                  <div className="flex flex-col gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedUrl);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#1ADBDE] py-2.5 font-bold text-[#0D1116] hover:bg-[#4AE5E8]"
+                    >
+                      {copied ? <CheckCircle2 className="h-4 w-4 text-[#0D1116]" /> : <Copy className="h-4 w-4" />}
+                      {copied ? 'LINK TRACKER DISALIN!' : 'SALIN LINK TRACKER HP'}
+                    </button>
+                  </div>
+                  <button type="button" onClick={() => setGeneratedUrl(null)} className="mt-2 text-xs font-semibold text-[#1ADBDE] hover:underline">
+                    ← Buat Link Baru
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

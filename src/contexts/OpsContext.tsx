@@ -8,12 +8,14 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { io } from 'socket.io-client';
 import { ALERTS, FLEET, MINES, NOTIFICATIONS, SHIFTS } from '../data/enterprise';
 import {
   buildCsv,
   generateInviteCode,
   triggerBrowserDownload,
 } from '../lib/export';
+import { apiUrl } from '../lib/api';
 import {
   applyTheme,
   loadPrefs,
@@ -163,6 +165,7 @@ export interface OpsContextValue {
   removeGpsDevice: (id: string) => void;
   updateGpsDevicePosition: (id: string, lat: number, lng: number, batteryPct?: number, accuracyM?: number) => void;
   generateDeviceInvite: (deviceId: string) => string;
+  generateFullDeviceInvite: (payload: { operatorName: string; unitLabel: string; deviceName: string; armadaType: string }) => Promise<{ url: string; code: string }>;
   registerGpsDevice: (code: string, payload: { fingerprint: string; platform: 'ios' | 'android'; lat: number; lng: number; accuracy: number }) => boolean;
   resetDailyTrails: () => void;
   resetSingleDeviceTrail: (key: string) => void;
@@ -211,59 +214,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     heat: false,
   });
   const [fleet, setFleet] = useState<FleetAsset[]>(() => FLEET.map((f) => ({ ...f })));
-  const [gpsDevices, setGpsDevices] = useState<GpsDevice[]>([
-    {
-      id: 'gps-1',
-      name: "Andi's Phone (HT-04)",
-      type: 'phone',
-      platform: 'android',
-      ownerId: 'op-1',
-      ownerName: 'Andi Pratama',
-      assetId: 'HT-04',
-      assetUnit: 'HT-04',
-      status: 'online',
-      lastSeen: new Date().toISOString(),
-      batteryPct: 87,
-      accuracyM: 4,
-      lat: mapXYToLatLng(62, 36)[0],
-      lng: mapXYToLatLng(62, 36)[1],
-      trail: [
-        { lat: mapXYToLatLng(82, 36)[0], lng: mapXYToLatLng(82, 36)[1], ts: new Date(Date.now() - 3600000).toISOString() },
-        { lat: mapXYToLatLng(76, 38)[0], lng: mapXYToLatLng(76, 38)[1], ts: new Date(Date.now() - 1800000).toISOString() },
-        { lat: mapXYToLatLng(70, 40)[0], lng: mapXYToLatLng(70, 40)[1], ts: new Date(Date.now() - 900000).toISOString() },
-        { lat: mapXYToLatLng(66, 37)[0], lng: mapXYToLatLng(66, 37)[1], ts: new Date(Date.now() - 300000).toISOString() },
-        { lat: mapXYToLatLng(62, 36)[0], lng: mapXYToLatLng(62, 36)[1], ts: new Date().toISOString() },
-      ],
-      inviteCode: 'INV-ABC123',
-      inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
-      createdAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: 'gps-2',
-      name: "Budi's Beacon (EX-01)",
-      type: 'beacon',
-      platform: 'ble',
-      ownerId: 'op-2',
-      ownerName: 'Budi Santoso',
-      assetId: 'EX-01',
-      assetUnit: 'EX-01',
-      status: 'online',
-      lastSeen: new Date().toISOString(),
-      batteryPct: 92,
-      accuracyM: 3,
-      lat: mapXYToLatLng(54, 74)[0],
-      lng: mapXYToLatLng(54, 74)[1],
-      trail: [
-        { lat: mapXYToLatLng(34, 60)[0], lng: mapXYToLatLng(34, 60)[1], ts: new Date(Date.now() - 3600000).toISOString() },
-        { lat: mapXYToLatLng(42, 66)[0], lng: mapXYToLatLng(42, 66)[1], ts: new Date(Date.now() - 1800000).toISOString() },
-        { lat: mapXYToLatLng(48, 70)[0], lng: mapXYToLatLng(48, 70)[1], ts: new Date(Date.now() - 900000).toISOString() },
-        { lat: mapXYToLatLng(54, 74)[0], lng: mapXYToLatLng(54, 74)[1], ts: new Date().toISOString() },
-      ],
-      inviteCode: 'INV-XYZ789',
-      inviteExpiresAt: new Date(Date.now() + 86400000).toISOString(),
-      createdAt: new Date(Date.now() - 172800000).toISOString(),
-    },
-  ]);
+  const [gpsDevices, setGpsDevices] = useState<GpsDevice[]>([]);
   const prefs = loadPrefs();
   const [settings, setSettings] = useState<OpsSettings>({
     autoRefresh: true,
@@ -289,125 +240,143 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(id);
   }, []);
 
-  // Poll GPS device updates from server/relay endpoint so mobile devices sync in real-time across network/tunnel
+  // GPS Sync & Socket.io Real-time connection
   useEffect(() => {
-    const syncInterval = setInterval(async () => {
-      try {
-        const res = await fetch('/api/gps/devices');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data.devices) && data.devices.length > 0) {
-          setGpsDevices((prev) => {
-            let updated = [...prev];
-            for (const serverDev of data.devices) {
-              // Match by inviteCode, id, code, unitLabel, or name
-              const idx = updated.findIndex(
-                (d) =>
-                  (d.inviteCode && d.inviteCode === serverDev.code) ||
-                  (d.id && d.id === serverDev.id) ||
-                  (d.assetUnit && d.assetUnit === serverDev.code) ||
-                  (d.assetUnit && d.assetUnit === serverDev.unitLabel) ||
-                  (d.name && d.name === serverDev.name && serverDev.name !== 'HP GPS Device' && serverDev.name !== 'Perangkat HP')
-              );
-              const newName = serverDev.deviceName || serverDev.name || (serverDev.unitLabel ? `Device ${serverDev.unitLabel}` : undefined);
-              const newUnit = serverDev.unitLabel || serverDev.code;
+    const processDevices = (devices: any[]) => {
+      if (!Array.isArray(devices) || devices.length === 0) return;
+      
+      setGpsDevices((prev) => {
+        let updated = [...prev];
+        for (const serverDev of devices) {
+          // Match by inviteCode, id, code, unitLabel, or name
+          const idx = updated.findIndex(
+            (d) =>
+              (d.inviteCode && d.inviteCode === serverDev.code) ||
+              (d.id && d.id === serverDev.id) ||
+              (d.assetUnit && d.assetUnit === serverDev.code) ||
+              (d.assetUnit && d.assetUnit === serverDev.unitLabel) ||
+              (d.name && d.name === serverDev.name && serverDev.name !== 'HP GPS Device' && serverDev.name !== 'Perangkat HP')
+          );
+          const newName = serverDev.deviceName || serverDev.name || (serverDev.unitLabel ? `Device ${serverDev.unitLabel}` : undefined);
+          const newUnit = serverDev.unitLabel || serverDev.code;
 
-              if (idx >= 0) {
-                updated[idx] = {
-                  ...updated[idx],
-                  name: newName || updated[idx].name,
-                  assetUnit: newUnit || updated[idx].assetUnit,
-                  assetId: newUnit || updated[idx].assetId,
-                  lat: serverDev.lat ?? updated[idx].lat,
-                  lng: serverDev.lng ?? updated[idx].lng,
-                  accuracyM: serverDev.accuracyM ?? updated[idx].accuracyM,
-                  batteryPct: serverDev.batteryPct ?? updated[idx].batteryPct,
-                  speedKph: serverDev.speedKph ?? updated[idx].speedKph,
-                  heading: serverDev.heading ?? updated[idx].heading,
-                  operationalStatus: serverDev.operationalStatus || updated[idx].operationalStatus,
-                  engineStatus: serverDev.engineStatus || updated[idx].engineStatus,
-                  payloadT: serverDev.payloadT ?? updated[idx].payloadT,
-                  fuelPct: serverDev.fuelPct ?? updated[idx].fuelPct,
-                  destination: serverDev.destination || updated[idx].destination,
-                  assignment: serverDev.assignment || updated[idx].assignment,
-                  tripsToday: serverDev.tripsToday ?? updated[idx].tripsToday,
-                  sos: serverDev.sos ?? updated[idx].sos,
-                  sosMessage: serverDev.sosMessage || updated[idx].sosMessage,
-                  status: 'online',
-                  lastSeen: serverDev.lastSeen || new Date().toISOString(),
-                  registeredAt: updated[idx].registeredAt || new Date().toISOString(),
-                  trail: serverDev.trail && serverDev.trail.length > 0 ? serverDev.trail : updated[idx].trail,
+          if (idx >= 0) {
+            updated[idx] = {
+              ...updated[idx],
+              name: newName || updated[idx].name,
+              assetUnit: newUnit || updated[idx].assetUnit,
+              assetId: newUnit || updated[idx].assetId,
+              lat: serverDev.lat ?? updated[idx].lat,
+              lng: serverDev.lng ?? updated[idx].lng,
+              accuracyM: serverDev.accuracyM ?? updated[idx].accuracyM,
+              batteryPct: serverDev.batteryPct ?? updated[idx].batteryPct,
+              speedKph: serverDev.speedKph ?? updated[idx].speedKph,
+              heading: serverDev.heading ?? updated[idx].heading,
+              operationalStatus: serverDev.operationalStatus || updated[idx].operationalStatus,
+              engineStatus: serverDev.engineStatus || updated[idx].engineStatus,
+              payloadT: serverDev.payloadT ?? updated[idx].payloadT,
+              fuelPct: serverDev.fuelPct ?? updated[idx].fuelPct,
+              destination: serverDev.destination || updated[idx].destination,
+              assignment: serverDev.assignment || updated[idx].assignment,
+              tripsToday: serverDev.tripsToday ?? updated[idx].tripsToday,
+              sos: serverDev.sos ?? updated[idx].sos,
+              sosMessage: serverDev.sosMessage || updated[idx].sosMessage,
+              status: 'online',
+              lastSeen: serverDev.lastSeen || new Date().toISOString(),
+              registeredAt: updated[idx].registeredAt || new Date().toISOString(),
+              trail: serverDev.trail && serverDev.trail.length > 0 ? serverDev.trail : updated[idx].trail,
+            };
+          } else if (serverDev.code || serverDev.id) {
+            // Add device registered from mobile
+            updated.push({
+              id: serverDev.id || `gps-${Date.now()}`,
+              name: newName || 'HP GPS Device',
+              type: 'phone',
+              platform: serverDev.platform || 'android',
+              ownerId: 'op-mobile',
+              ownerName: serverDev.ownerName || serverDev.operatorName || 'Driver / Field Operator',
+              assetId: newUnit || '',
+              assetUnit: newUnit || '',
+              status: 'online',
+              lastSeen: serverDev.lastSeen || new Date().toISOString(),
+              batteryPct: serverDev.batteryPct || 100,
+              accuracyM: serverDev.accuracyM || 5,
+              speedKph: serverDev.speedKph ?? 0,
+              heading: serverDev.heading ?? 0,
+              operationalStatus: serverDev.operationalStatus || 'Hauling',
+              engineStatus: serverDev.engineStatus || 'Running',
+              payloadT: serverDev.payloadT ?? 42,
+              fuelPct: serverDev.fuelPct ?? 85,
+              destination: serverDev.destination || 'Crusher Pad',
+              assignment: serverDev.assignment || 'Pit North Haulage',
+              tripsToday: serverDev.tripsToday ?? 0,
+              sos: serverDev.sos ?? false,
+              sosMessage: serverDev.sosMessage,
+              lat: serverDev.lat || 0,
+              lng: serverDev.lng || 0,
+              trail: serverDev.trail || [],
+              inviteCode: serverDev.code,
+              createdAt: new Date().toISOString(),
+            });
+          }
+
+          // Update linked fleet asset if exists
+          const targetUnit = newUnit;
+          if (targetUnit) {
+            setFleet((prevFleet) => {
+              const fIdx = prevFleet.findIndex((f) => f.unit === targetUnit || f.id === targetUnit);
+              if (fIdx >= 0 && (serverDev.lat || serverDev.speedKph !== undefined)) {
+                const copy = [...prevFleet];
+                const existingAsset = copy[fIdx];
+                copy[fIdx] = {
+                  ...existingAsset,
+                  lat: serverDev.lat ?? existingAsset.lat,
+                  lng: serverDev.lng ?? existingAsset.lng,
+                  speedKph: serverDev.speedKph ?? existingAsset.speedKph,
+                  status: serverDev.operationalStatus ? (serverDev.operationalStatus as any) : existingAsset.status,
+                  fuelPct: serverDev.fuelPct ?? existingAsset.fuelPct,
+                  payloadT: serverDev.payloadT ?? existingAsset.payloadT,
+                  destination: serverDev.destination || existingAsset.destination,
+                  assignment: serverDev.assignment || existingAsset.assignment,
+                  connectivity: 'Online',
+                  lastUpdate: 'Just now',
                 };
-              } else if (serverDev.code || serverDev.id) {
-                // Add device registered from mobile
-                updated.push({
-                  id: serverDev.id || `gps-${Date.now()}`,
-                  name: newName || 'HP GPS Device',
-                  type: 'phone',
-                  platform: serverDev.platform || 'android',
-                  ownerId: 'op-mobile',
-                  ownerName: serverDev.ownerName || serverDev.operatorName || 'Driver / Field Operator',
-                  assetId: newUnit || '',
-                  assetUnit: newUnit || '',
-                  status: 'online',
-                  lastSeen: serverDev.lastSeen || new Date().toISOString(),
-                  batteryPct: serverDev.batteryPct || 100,
-                  accuracyM: serverDev.accuracyM || 5,
-                  speedKph: serverDev.speedKph ?? 0,
-                  heading: serverDev.heading ?? 0,
-                  operationalStatus: serverDev.operationalStatus || 'Hauling',
-                  engineStatus: serverDev.engineStatus || 'Running',
-                  payloadT: serverDev.payloadT ?? 42,
-                  fuelPct: serverDev.fuelPct ?? 85,
-                  destination: serverDev.destination || 'Crusher Pad',
-                  assignment: serverDev.assignment || 'Pit North Haulage',
-                  tripsToday: serverDev.tripsToday ?? 0,
-                  sos: serverDev.sos ?? false,
-                  sosMessage: serverDev.sosMessage,
-                  lat: serverDev.lat || 0,
-                  lng: serverDev.lng || 0,
-                  trail: serverDev.trail || [],
-                  inviteCode: serverDev.code,
-                  createdAt: new Date().toISOString(),
-                });
+                return copy;
               }
-
-              // Update linked fleet asset if exists
-              const targetUnit = newUnit;
-              if (targetUnit) {
-                setFleet((prevFleet) => {
-                  const fIdx = prevFleet.findIndex((f) => f.unit === targetUnit || f.id === targetUnit);
-                  if (fIdx >= 0 && (serverDev.lat || serverDev.speedKph !== undefined)) {
-                    const copy = [...prevFleet];
-                    const existingAsset = copy[fIdx];
-                    copy[fIdx] = {
-                      ...existingAsset,
-                      lat: serverDev.lat ?? existingAsset.lat,
-                      lng: serverDev.lng ?? existingAsset.lng,
-                      speedKph: serverDev.speedKph ?? existingAsset.speedKph,
-                      status: serverDev.operationalStatus ? (serverDev.operationalStatus as any) : existingAsset.status,
-                      fuelPct: serverDev.fuelPct ?? existingAsset.fuelPct,
-                      payloadT: serverDev.payloadT ?? existingAsset.payloadT,
-                      destination: serverDev.destination || existingAsset.destination,
-                      assignment: serverDev.assignment || existingAsset.assignment,
-                      connectivity: 'Online',
-                      lastUpdate: 'Just now',
-                    };
-                    return copy;
-                  }
-                  return prevFleet;
-                });
-              }
-            }
-            return updated;
-          });
+              return prevFleet;
+            });
+          }
         }
-      } catch (err) {
-        // Silently ignore network polling errors
-      }
-    }, 800);
+        return updated;
+      });
+    };
 
-    return () => clearInterval(syncInterval);
+    // 1. Fetch initial state
+    fetch(apiUrl('/api/gps/devices'))
+      .then((res) => (res.ok ? res.json() : { devices: [] }))
+      .then((data) => {
+        if (data.devices) processDevices(data.devices);
+      })
+      .catch(() => {});
+
+    // 2. Setup Socket.io for Real-time pushes (Separate Service)
+    const realtimeUrl = import.meta.env.VITE_REALTIME_URL || import.meta.env.VITE_API_URL || window.location.origin;
+    const socket = io(realtimeUrl, {
+      transports: ['websocket', 'polling'], // Fallback safely
+    });
+
+    socket.on('connect', () => {
+      console.log('[OpsContext] Connected to Live Tracker Socket:', socket.id);
+    });
+
+    socket.on('gps-update', (deviceData: any) => {
+      // Process the single device update pushed from backend
+      processDevices([deviceData]);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, []);
 
   const mine = MINES.find((m) => m.id === mineId) ?? MINES[0];
@@ -560,7 +529,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setGpsDevices((prev) => [...prev, newDevice]);
       pushToast({ tone: 'success', title: 'Device added', message: newDevice.name });
       if (newDevice.inviteCode) {
-        fetch('/api/gps/invite', {
+        fetch(apiUrl('/api/gps/invite'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -627,7 +596,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           d.id === deviceId ? { ...d, inviteCode: code, inviteExpiresAt: expiresAt } : d
         )
       );
-      fetch('/api/gps/invite', {
+      fetch(apiUrl('/api/gps/invite'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, id: deviceId }),
@@ -638,6 +607,33 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       return `${baseUrl}/track/join?code=${code}`;
     },
     [pushToast],
+  );
+
+  const generateFullDeviceInvite = useCallback(
+    async (payload: { operatorName: string; unitLabel: string; deviceName: string; armadaType: string }): Promise<{ url: string; code: string }> => {
+      const code = generateInviteCode();
+      const deviceId = `gps-${Date.now()}`;
+      
+      try {
+        await fetch(apiUrl('/api/gps/invite'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+             code, 
+             id: deviceId,
+             operatorName: payload.operatorName,
+             unitLabel: payload.unitLabel,
+             name: payload.deviceName
+          }),
+        });
+      } catch (err) {
+        console.warn('Failed to pre-register invite to server:', err);
+      }
+      
+      const baseUrl = import.meta.env.VITE_PUBLIC_URL ?? window.location.origin;
+      return { url: `${baseUrl}/track/join?code=${code}`, code };
+    },
+    []
   );
 
   const registerGpsDevice = useCallback(
@@ -689,7 +685,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           : d
       )
     );
-    fetch('/api/gps/reset-trail', {
+    fetch(apiUrl('/api/gps/reset-trail'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: key, id: key }),
@@ -771,6 +767,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       removeGpsDevice,
       updateGpsDevicePosition,
       generateDeviceInvite,
+      generateFullDeviceInvite,
       registerGpsDevice,
       resetDailyTrails,
       resetSingleDeviceTrail,
@@ -818,6 +815,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       removeGpsDevice,
       updateGpsDevicePosition,
       generateDeviceInvite,
+      generateFullDeviceInvite,
       registerGpsDevice,
       resetDailyTrails,
       resetSingleDeviceTrail,

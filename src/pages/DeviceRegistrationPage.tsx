@@ -13,6 +13,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOps } from '../contexts/OpsContext';
+import { apiUrl } from '../lib/api';
 
 export default function DeviceRegistrationPage() {
   const navigate = useNavigate();
@@ -42,7 +43,7 @@ export default function DeviceRegistrationPage() {
   // Helper to sync device/position to central server over tunnel
   const syncToServer = async (endpoint: 'register' | 'update', payload: any) => {
     try {
-      await fetch(`/api/gps/${endpoint}`, {
+      await fetch(apiUrl(`/api/gps/${endpoint}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -104,7 +105,7 @@ export default function DeviceRegistrationPage() {
       setStep('permission');
     } else {
       // Try validating code with server store
-      fetch('/api/gps/devices')
+      fetch(apiUrl('/api/gps/devices'))
         .then(res => res.json())
         .then(data => {
           const matched = data.devices?.find((d: any) => d.code === code || d.inviteCode === code);

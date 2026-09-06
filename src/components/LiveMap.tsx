@@ -284,9 +284,11 @@ function MapController({
     }
   }, [zoom, map]);
 
-  // Initial Camera focus onto Online Operator
+  // Initial Camera focus onto Online Operator or tracked vehicles
   useEffect(() => {
-    if (!initialCenteredRef.current && initialOperator && Number.isFinite(initialOperator.lat) && Number.isFinite(initialOperator.lng)) {
+    if (initialCenteredRef.current) return;
+
+    if (initialOperator && Number.isFinite(initialOperator.lat) && Number.isFinite(initialOperator.lng)) {
       initialCenteredRef.current = true;
       const targetZoom = Math.max(map.getZoom(), 16);
       map.flyTo([initialOperator.lat, initialOperator.lng], targetZoom, {
@@ -301,8 +303,30 @@ function MapController({
         title: '🎯 Kamera Terpusat ke Operator Online',
         message: `${initialOperator.name} · Unit ${initialOperator.unit}`,
       });
+    } else if (vehicles && vehicles.length > 0) {
+      const validCoords = vehicles
+        .map(v => {
+          if (typeof v.lat === 'number' && typeof v.lng === 'number') return L.latLng(v.lat, v.lng);
+          if (typeof v.x === 'number' && typeof v.y === 'number') {
+            const [lat, lng] = mapXYToLatLng(v.x, v.y);
+            return L.latLng(lat, lng);
+          }
+          return null;
+        })
+        .filter((ll): ll is L.LatLng => ll !== null);
+        
+      if (validCoords.length > 0) {
+        initialCenteredRef.current = true;
+        const bounds = L.latLngBounds(validCoords);
+        map.flyToBounds(bounds, { padding: [50, 50], duration: 1.2 });
+        pushToast({
+          tone: 'success',
+          title: '🎯 Kamera Terpusat ke Area Tracking',
+          message: `Menampilkan ${validCoords.length} unit yang sedang dilacak.`,
+        });
+      }
     }
-  }, [initialOperator, map, onSelectUnit, pushToast]);
+  }, [initialOperator, map, onSelectUnit, pushToast, vehicles]);
 
   // Listen for map zoom & drag events
   useMapEvents({

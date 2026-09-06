@@ -46,6 +46,7 @@ import {
   latLngToMapXY,
   mapXYToLatLng,
 } from '../lib/mapConfig';
+import { apiUrl } from '../lib/api';
 
 // Custom Leaflet pulse marker icon for Mobile GPS target
 function createMobileGpsIcon(heading: number = 0, isTransmitting: boolean = true, isSos: boolean = false) {
@@ -164,7 +165,7 @@ export default function MobileTrackerPage() {
   // Load invite info if available
   useEffect(() => {
     if (inviteCode) {
-      fetch('/api/gps/devices')
+      fetch(apiUrl('/api/gps/devices'))
         .then((res) => res.json())
         .then((data) => {
           const matched = data.devices?.find((d: any) => d.code === inviteCode || d.inviteCode === inviteCode);
@@ -297,7 +298,7 @@ export default function MobileTrackerPage() {
   const registerDeviceOnServer = async (lat: number, lng: number, accuracy?: number) => {
     try {
       const codeKey = inviteCode || unitLabel.toUpperCase();
-      await fetch('/api/gps/register', {
+      await fetch(apiUrl('/api/gps/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -391,7 +392,7 @@ export default function MobileTrackerPage() {
     // Send HTTP POST to central server
     const startT = performance.now();
     try {
-      await fetch('/api/gps/update', {
+      await fetch(apiUrl('/api/gps/update'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

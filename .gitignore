@@ -66,3 +66,9 @@ nginx.conf
 
 # Analysis output
 graphify-out/
+
+# Backend
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/.env.production
